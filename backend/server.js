@@ -33,4 +33,4 @@ http.createServer((req, res) => {
   if (req.method === "GET" && (req.url === "/" || req.url === "/index.html"))
     return send(res, 200, fs.readFileSync(path.join(__dirname, "public", "index.html"), "utf8"), "text/html");
   send(res, 404, { error: "Not found" });
-}).listen(3000, () => console.log("Saarthi AI running at http://localhost:3000"));
+}).listen(process.env.PORT || 3000, () => console.log("Saarthi AI running on port " + (process.env.PORT || 3000)));
