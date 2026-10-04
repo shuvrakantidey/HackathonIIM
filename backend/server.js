@@ -1,4 +1,3 @@
-// Zero-dependency server. Run: node server.js  (Node 18+), then open http://localhost:3000
 const http = require("http");
 const fs = require("fs");
 const path = require("path");

@@ -1,4 +1,3 @@
-// Rule engine: turns one scenario's data into status, alerts and a 0-100 risk score.
 const hi = (v, w, c) => (v >= c ? "critical" : v >= w ? "warning" : "ok");
 const lo = (v, w, c) => (v <= c ? "critical" : v <= w ? "warning" : "ok");
 const rank = { critical: 3, warning: 2, info: 1 };

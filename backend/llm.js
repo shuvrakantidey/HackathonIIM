@@ -1,6 +1,3 @@
-// "What should I do?" advice.
-// Uses Gemini if GEMINI_API_KEY is set, else Anthropic if ANTHROPIC_API_KEY is set.
-// If there is no key or the call fails, it falls back to advice built from the rule engine alerts.
 const SYSTEM =
   "You are Saarthi, a calm in-car safety co-pilot. Give the driver exactly 3 short imperative steps, " +
   "one per line, max 14 words each. Plain sentences only: no numbering, no labels like 'Step 1', no headings, no brackets. " +
