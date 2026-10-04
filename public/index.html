@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saarthi AI</title>
+<style>
+:root{--bg:#EDEFF2;--card:#fff;--ink:#16202E;--mute:#5C6877;--line:#CBD2DB;--ok:#1F8A70;--warn:#D99A00;--crit:#C8333D;--navy:#1D3557}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:1060px;margin:0 auto;padding:24px 16px 48px}
+h1{margin:0;font-size:28px;color:var(--navy)}
+h2{margin:0 0 12px;font-size:16px;color:var(--mute);font-weight:600}
+header p{margin:0 0 16px;color:var(--mute)}
+nav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+nav button{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:6px;font:inherit;cursor:pointer}
+nav button[aria-pressed=true]{background:var(--navy);color:#fff;border-color:var(--navy)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px}
+.wide{grid-column:1/-1}
+.gauge{text-align:center}
+.gauge svg{width:100%;max-width:300px}
+.gauge .lvl{font-size:22px;font-weight:700;margin-top:-6px}
+.safe{color:var(--ok)}.caution,.warning{color:var(--warn)}.high,.critical{color:var(--crit)}
+.row{display:grid;grid-template-columns:120px 1fr 70px;gap:10px;align-items:center;margin:8px 0}
+.bar{height:8px;background:#E4E8ED;border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%}
+.ok-bg{background:var(--ok)}.warning-bg{background:var(--warn)}.critical-bg{background:var(--crit)}
+.row b{text-align:right}
+.alert{border-left:5px solid;padding:6px 12px;margin:8px 0;background:#F7F8FA}
+.alert.critical{border-color:var(--crit)}.alert.warning{border-color:var(--warn)}.alert.info{border-color:var(--navy)}
+.alert strong{display:block}.alert span{color:var(--mute);font-size:14px}
+.empty{color:var(--ok);font-weight:600}
+.trend{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.trend small{color:var(--mute)}
+.trend svg{width:100%;height:50px}
+#ask{background:var(--crit);color:#fff;border:0;border-radius:8px;padding:14px 26px;font:700 18px inherit;cursor:pointer}
+#ask:disabled{opacity:.6;cursor:wait}
+#steps{font-size:20px;margin:16px 0 0;padding-left:24px}
+#steps li{margin:6px 0}
+#src{color:var(--mute);font-size:13px;margin-top:8px}
+button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.row{grid-template-columns:100px 1fr 60px}}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Saarthi AI</h1><p>Driving safety co-pilot</p></header>
+  <nav id="sc" aria-label="Scenarios"></nav>
+  <section class="grid">
+    <div class="panel gauge" id="risk"></div>
+    <div class="panel"><h2>Live readings</h2><div id="metrics"></div></div>
+    <div class="panel"><h2>Alerts</h2><div id="alerts"></div></div>
+    <div class="panel"><h2>Across recent trips</h2><div id="trends"></div></div>
+    <div class="panel wide">
+      <button id="ask">What should I do?</button>
+      <ol id="steps" aria-live="polite"></ol>
+      <div id="src"></div>
+    </div>
+  </section>
+</main>
+<script>
+let scenarios = [], trends = null, cur = 0;
+const $ = (id) => document.getElementById(id);
+const cls = { safe: "var(--ok)", caution: "var(--warn)", high: "var(--crit)", critical: "var(--crit)" };
+
+function spark(vals, color) {
+  const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 200},${46 - ((v - min) / span) * 40}`).join(" ");
+  return `<svg viewBox="0 0 200 50" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="3"/></svg>`;
+}
+
+function render() {
+  const s = scenarios[cur], d = s.data, a = s.analysis;
+  document.querySelectorAll("#sc button").forEach((b, i) => b.setAttribute("aria-pressed", i === cur));
+
+  const arc = 251.3 * (1 - a.score / 100);
+  $("risk").innerHTML = `<h2>Risk level</h2>
+    <svg viewBox="0 0 200 120"><path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="#E4E8ED" stroke-width="16" stroke-linecap="round"/>
+    <path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="${cls[a.level]}" stroke-width="16" stroke-linecap="round" stroke-dasharray="251.3" stroke-dashoffset="${arc}"/>
+    <text x="100" y="92" text-anchor="middle" font-size="44" font-weight="700" fill="#16202E">${a.score}</text></svg>
+    <div class="lvl ${a.level}">${a.level[0].toUpperCase() + a.level.slice(1)}</div>`;
+
+  const m = [
+    ["Fatigue", d.fatigue + "%", d.fatigue, 100, a.status.fatigue],
+    ["Driving time", d.drivingHours + " h", d.drivingHours, 6, a.status.drivingHours],
+    ["Distraction", d.distraction + "%", d.distraction, 100, a.status.distraction],
+    ["Tyre pressure", d.tyrePressure + " PSI", d.tyrePressure, 40, a.status.tyrePressure],
+    ["Engine temp", d.engineTemp + " °C", d.engineTemp, 120, a.status.engineTemp],
+  ];
+  $("metrics").innerHTML = m.map(([n, t, v, max, st]) =>
+    `<div class="row"><span>${n}</span><div class="bar"><i class="${st}-bg" style="width:${Math.min(v / max, 1) * 100}%"></i></div><b>${t}</b></div>`).join("") +
+    `<div class="row"><span>Conditions</span><span style="grid-column:2/4">Rain: ${d.rain} · ${d.isNight ? "Night" : "Day"}</span></div>`;
+
+  $("alerts").innerHTML = a.alerts.length
+    ? a.alerts.map((x) => `<div class="alert ${x.severity}"><strong>${x.title}</strong><span>${x.detail}</span></div>`).join("")
+    : `<div class="empty">All clear. No alerts.</div>`;
+
+  $("steps").innerHTML = ""; $("src").textContent = "";
+}
+
+function renderTrends() {
+  const h = trends.history;
+  $("trends").innerHTML = `<div class="trend">
+    <div><small>Tyre pressure (PSI)</small>${spark(h.map((x) => x.tyre), "#D99A00")}</div>
+    <div><small>Battery health (%)</small>${spark(h.map((x) => x.battery), "#C8333D")}</div></div>` +
+    trends.messages.map((t) => `<div class="alert warning"><span style="color:var(--ink)">${t}</span></div>`).join("");
+}
+
+$("ask").onclick = async () => {
+  const btn = $("ask"); btn.disabled = true; btn.textContent = "Thinking…";
+  try {
+    const r = await fetch("/api/advice", { method: "POST", body: JSON.stringify({ index: cur }) });
+    const j = await r.json();
+    $("steps").innerHTML = j.steps.map((t) => `<li>${t}</li>`).join("");
+    $("src").textContent = j.source === "ai" ? "Advice generated by AI" : "Offline advice from safety rules";
+  } catch {
+    $("steps").innerHTML = "<li>Could not reach the server. Slow down and drive carefully.</li>";
+  }
+  btn.disabled = false; btn.textContent = "What should I do?";
+};
+
+(async () => {
+  scenarios = await (await fetch("/api/scenarios")).json();
+  trends = await (await fetch("/api/trends")).json();
+  $("sc").innerHTML = scenarios.map((s, i) => `<button aria-pressed="false" data-i="${i}">${s.name}</button>`).join("");
+  $("sc").onclick = (e) => { if (e.target.dataset.i) { cur = +e.target.dataset.i; render(); } };
+  render(); renderTrends();
+})();
+</script>
+</body>
+</html>
