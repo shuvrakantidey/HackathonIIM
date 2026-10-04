@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Saarthi AI</title>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
 <style>
 :root{--bg:#EDEFF2;--card:#fff;--ink:#16202E;--mute:#5C6877;--line:#CBD2DB;--ok:#1F8A70;--warn:#D99A00;--crit:#C8333D;--navy:#1D3557}
 *{box-sizing:border-box}
@@ -41,11 +42,54 @@ nav button[aria-pressed=true]{background:var(--navy);color:#fff;border-color:var
 #src{color:var(--mute);font-size:13px;margin-top:8px}
 button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 @media(max-width:700px){.grid{grid-template-columns:1fr}.row{grid-template-columns:100px 1fr 60px}}
+#lock{position:fixed;inset:0;z-index:10;background:var(--navy);display:flex;align-items:center;justify-content:center;padding:16px}
+#lock[hidden]{display:none}
+.lockbox{background:var(--card);border-radius:12px;padding:24px;width:100%;max-width:420px;text-align:center}
+.lockbox h2{color:var(--navy);font-size:20px}
+.lockbox video{width:100%;border-radius:8px;background:#000;transform:scaleX(-1)}
+.lockbox input{width:100%;padding:10px;margin:10px 0 0;border:1px solid var(--line);border-radius:6px;font:inherit}
+.lockbox button{margin:10px 6px 0;padding:10px 18px;border-radius:6px;border:0;font:600 16px inherit;cursor:pointer;background:var(--navy);color:#fff}
+.lockbox button.ghost{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+.lockbox button:disabled{opacity:.5;cursor:not-allowed}
+#lockmsg{min-height:48px;margin:12px 0 0}
+#lockmsg.bad{color:var(--crit);font-weight:600}
+#who{color:var(--mute)}
+#lockBtn{margin-left:8px;border:1px solid var(--line);background:var(--card);border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}
+#home,#driver{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center}
+#home[hidden],#driver[hidden],main[hidden]{display:none}
+#home p{color:var(--mute);margin:4px 0 24px}
+.choices{display:flex;flex-wrap:wrap;gap:16px;justify-content:center}
+.choice{width:260px;padding:28px 20px;background:var(--card);border:1px solid var(--line);border-radius:12px;cursor:pointer;font:inherit;color:var(--ink)}
+.choice strong{display:block;font-size:26px;color:var(--navy)}
+.choice span{color:var(--mute)}
+.choice:hover{border-color:var(--navy)}
+#homeBtn{margin-left:8px;border:1px solid var(--line);background:var(--card);border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}
 </style>
 </head>
 <body>
-<main>
-  <header><h1>Saarthi AI</h1><p>Driving safety co-pilot</p></header>
+<section id="home">
+  <h1>Saarthi AI</h1>
+  <p>Choose a mode</p>
+  <div class="choices">
+    <button class="choice" id="goCar"><strong>Car</strong><span>Vehicle health, risk score and safety advice</span></button>
+    <button class="choice" id="goDriver"><strong>Driver</strong><span>Register your face or unlock the car</span></button>
+  </div>
+</section>
+<section id="driver" hidden>
+  <div class="lockbox">
+    <h2>Driver</h2>
+    <video id="cam" autoplay muted playsinline></video>
+    <p id="lockmsg">Loading face recognition…</p>
+    <input id="drvName" placeholder="Driver name (only needed to register)">
+    <button id="enrollBtn" disabled>Register driver</button>
+    <button id="unlockBtn" disabled>Unlock car</button>
+    <button id="openCar" hidden>Open car dashboard</button>
+    <button id="skipBtn" class="ghost" hidden>Continue without face unlock (demo)</button>
+    <button id="backFromDriver" class="ghost">Back</button>
+  </div>
+</section>
+<main id="car" hidden>
+  <header><h1>Saarthi AI</h1><p>Driving safety co-pilot <span id="who">· Driver not verified</span><button id="homeBtn">Home</button></p></header>
   <nav id="sc" aria-label="Scenarios"></nav>
   <section class="grid">
     <div class="panel gauge" id="risk"></div>
@@ -92,9 +136,9 @@ function render() {
     `<div class="row"><span>${n}</span><div class="bar"><i class="${st}-bg" style="width:${Math.min(v / max, 1) * 100}%"></i></div><b>${t}</b></div>`).join("") +
     `<div class="row"><span>Conditions</span><span style="grid-column:2/4">Rain: ${d.rain} · ${d.isNight ? "Night" : "Day"}</span></div>`;
 
-  $("alerts").innerHTML = a.alerts.length
+  $("alerts").innerHTML = secHtml() + (a.alerts.length
     ? a.alerts.map((x) => `<div class="alert ${x.severity}"><strong>${x.title}</strong><span>${x.detail}</span></div>`).join("")
-    : `<div class="empty">All clear. No alerts.</div>`;
+    : `<div class="empty">All clear. No alerts.</div>`);
 
   $("steps").innerHTML = ""; $("src").textContent = "";
 }
@@ -127,6 +171,89 @@ $("ask").onclick = async () => {
   $("sc").onclick = (e) => { if (e.target.dataset.i) { cur = +e.target.dataset.i; render(); } };
   render(); renderTrends();
 })();
+
+// ---- Views ----
+function show(v) {
+  ["home", "driver", "car"].forEach((id) => ($(id).hidden = id !== v));
+  if (v === "driver") initFace(); else stopCam();
+  if (v === "car" && scenarios.length) render();
+}
+$("goCar").onclick = () => show("car");
+$("goDriver").onclick = () => show("driver");
+$("homeBtn").onclick = () => show("home");
+$("backFromDriver").onclick = () => show("home");
+$("openCar").onclick = () => show("car");
+
+// ---- Face recognition (runs fully in the browser) ----
+const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/";
+const KEY = "saarthi_drivers", THRESHOLD = 0.5;
+const secEvents = [];
+let fails = 0, modelsReady = false;
+const drivers = () => JSON.parse(localStorage.getItem(KEY) || "[]");
+const say = (t, bad) => { $("lockmsg").textContent = t; $("lockmsg").className = bad ? "bad" : ""; };
+const secHtml = () => secEvents.map((t) =>
+  `<div class="alert critical"><strong>Unauthorized access attempt</strong><span>Unknown face rejected at ${t}</span></div>`).join("");
+const stopCam = () => { const v = $("cam").srcObject; if (v) v.getTracks().forEach((t) => t.stop()); $("cam").srcObject = null; };
+
+function unlocked(name) {
+  fails = 0;
+  $("who").textContent = name ? "· Driver: " + name : "· Face unlock skipped";
+  say(name ? `Welcome, ${name}. Car unlocked.` : "Face unlock skipped for this demo.");
+  $("unlockBtn").disabled = $("enrollBtn").disabled = true;
+  $("openCar").hidden = false; $("skipBtn").hidden = true;
+  stopCam();
+}
+
+async function descriptor() {
+  const r = await faceapi.detectSingleFace($("cam"), new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
+  return r ? r.descriptor : null;
+}
+
+async function initFace() {
+  $("unlockBtn").disabled = $("enrollBtn").disabled = true; $("openCar").hidden = true; $("skipBtn").hidden = true;
+  say("Loading face recognition…");
+  try {
+    if (!modelsReady) {
+      await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)]);
+      modelsReady = true;
+    }
+    $("cam").srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+    $("unlockBtn").disabled = $("enrollBtn").disabled = false;
+    say(drivers().length ? "Look at the camera and press Unlock car, or register another driver." : "No driver registered yet. Enter your name and press Register driver.");
+  } catch (e) {
+    say("Camera or face models could not load. Allow camera access and check your internet.", true);
+    $("skipBtn").hidden = false;
+  }
+}
+
+$("enrollBtn").onclick = async () => {
+  const name = $("drvName").value.trim();
+  if (!name) return say("Enter the driver name first.", true);
+  say("Scanning…");
+  const d = await descriptor();
+  if (!d) return say("No face found. Face the camera in good light.", true);
+  localStorage.setItem(KEY, JSON.stringify([...drivers(), { name, d: Array.from(d) }]));
+  say(name + " registered. Now press Unlock car.");
+};
+
+$("unlockBtn").onclick = async () => {
+  if (!drivers().length) return say("Register a driver first.", true);
+  say("Verifying…");
+  const d = await descriptor();
+  if (!d) return say("No face found. Face the camera in good light.", true);
+  let best = { name: null, dist: 9 };
+  drivers().forEach((x) => { const dist = faceapi.euclideanDistance(d, Float32Array.from(x.d)); if (dist < best.dist) best = { name: x.name, dist }; });
+  if (best.dist < THRESHOLD) return unlocked(best.name);
+  fails++;
+  say(`Face not recognised (${fails}/3).`, true);
+  if (fails >= 3) {
+    secEvents.push(new Date().toLocaleTimeString());
+    say("Unknown driver. Access denied and owner alert recorded (simulated).", true);
+    $("unlockBtn").disabled = true; setTimeout(() => { $("unlockBtn").disabled = false; fails = 0; }, 15000);
+  }
+};
+
+$("skipBtn").onclick = () => unlocked(null);
 </script>
 </body>
 </html>
