@@ -73,6 +73,8 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 #padlock.open #shackle{transform:translateY(-9px)}
 #padlock.denied{animation:shake .35s 3}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+.plate{display:inline-block;background:#fff;border:2px solid var(--ink);border-radius:6px;padding:1px 10px;margin:0 6px;font:700 15px/1.4 monospace;letter-spacing:2px;color:var(--ink)}
+.plate[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -98,6 +100,7 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
     <p id="step"><strong>Step 1 of 2: register your face</strong></p>
     <p id="lockmsg">Loading face recognition…</p>
     <input id="drvName" placeholder="Driver name (only needed to register)">
+    <input id="drvPlate" placeholder="Vehicle number (e.g. WB 02 AB 1234)" maxlength="15">
     <button id="enrollBtn" disabled>Register driver</button>
     <button id="unlockBtn" disabled hidden>Scan now</button>
     <button id="openCar" hidden>Open car dashboard</button>
@@ -107,7 +110,7 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
   </div>
 </section>
 <main id="car" hidden>
-  <header><h1>Saarthi AI</h1><p>Driving safety co-pilot <span id="who">· Driver not verified</span><button id="homeBtn">Home</button></p></header>
+  <header><h1>Saarthi AI</h1><p>Driving safety co-pilot <span class="plate" id="plate" hidden></span> <span id="who">· Driver not verified</span><button id="homeBtn">Home</button></p></header>
   <nav id="sc" aria-label="Scenarios"></nav>
   <section class="grid">
     <div class="panel gauge" id="risk"></div>
@@ -264,11 +267,12 @@ async function scanLoop() {
 }
 const stopCam = () => { stopScan(); const v = $("cam").srcObject; if (v) v.getTracks().forEach((t) => t.stop()); $("cam").srcObject = null; };
 
-function unlocked(name) {
+function unlocked(name, plate) {
   fails = 0; isUnlocked = true; stopScan();
   $("goCar").hidden = false; $("homeSub").textContent = "Driver verified. Choose a mode";
   $("who").textContent = name ? "· Driver: " + name : "· Face unlock skipped";
-  say(name ? `Welcome, ${name}. Car unlocked.` : "Face unlock skipped for this demo.");
+  $("plate").textContent = plate || ""; $("plate").hidden = !plate;
+  say(name ? `Welcome, ${name}. ${plate ? "Vehicle " + plate + " " : "Car "}unlocked.` : "Face unlock skipped for this demo.");
   setLock(true); clickSound(); speakNow(name ? `Welcome ${name}. Car unlocked.` : "Car unlocked.");
   $("step").innerHTML = "<strong>Car unlocked</strong>";
   $("unlockBtn").disabled = $("enrollBtn").disabled = true;
@@ -297,9 +301,9 @@ async function attempt(auto) {
   try { d = await descriptor(); } catch (e) { console.warn("scan error", e); say("Scan error: " + (e.message || e), true); return; }
   if (isUnlocked) return;
   if (!d) { fails = 0; say(auto ? "Waiting for a face…" : "No face found. Face the camera in good light.", !auto); return; }
-  let best = { name: null, dist: 9 };
-  drivers().forEach((x) => { const dist = faceapi.euclideanDistance(d, Float32Array.from(x.d)); if (dist < best.dist) best = { name: x.name, dist }; });
-  if (best.dist < THRESHOLD) return unlocked(best.name);
+  let best = { name: null, plate: null, dist: 9 };
+  drivers().forEach((x) => { const dist = faceapi.euclideanDistance(d, Float32Array.from(x.d)); if (dist < best.dist) best = { name: x.name, plate: x.plate, dist }; });
+  if (best.dist < THRESHOLD) return unlocked(best.name, best.plate);
   fails++;
   say(`Face not recognised (${fails}/${MAX_FAILS}).`, true);
   if (fails >= MAX_FAILS) deny();
@@ -325,7 +329,7 @@ async function initFace() {
     $("unlockBtn").disabled = $("enrollBtn").disabled = false;
     refreshSteps();
     if (drivers().length) { say("Look at the camera. Scanning…"); startScan(); }
-    else say("Enter your name and press Register driver. Unlock comes after.");
+    else say("Enter your name and vehicle number, then press Register driver. Unlock comes after.");
   } catch (e) {
     say("Camera or face models could not load. Allow camera access and check your internet.", true);
     $("skipBtn").hidden = false;
@@ -334,13 +338,15 @@ async function initFace() {
 
 $("enrollBtn").onclick = async () => {
   const name = $("drvName").value.trim();
+  const plate = $("drvPlate").value.trim().toUpperCase().replace(/\s+/g, " ");
   if (!name) return say("Enter the driver name first.", true);
+  if (!plate) return say("Enter the vehicle number first.", true);
   stopScan(); say("Scanning…");
   const d = await descriptor();
   if (!d) { say("No face found. Face the camera in good light.", true); if (drivers().length) startScan(); return; }
-  localStorage.setItem(KEY, JSON.stringify([...drivers(), { name, d: Array.from(d) }]));
+  localStorage.setItem(KEY, JSON.stringify([...drivers(), { name, plate, d: Array.from(d) }]));
   refreshSteps();
-  say(name + " registered. Scanning to unlock in 3 seconds…");
+  say(`${name} registered with vehicle ${plate}. Scanning to unlock in 3 seconds…`);
   setTimeout(() => { if (!isUnlocked && $("cam").srcObject) { say("Look at the camera. Scanning…"); startScan(); } }, 3000);
 };
 
@@ -348,7 +354,7 @@ $("unlockBtn").onclick = () => { if (!drivers().length) return say("Register a d
 $("skipBtn").onclick = () => unlocked(null);
 $("relockBtn").onclick = () => {
   isUnlocked = false; $("goCar").hidden = true;
-  $("who").textContent = "· Driver not verified"; $("homeSub").textContent = "Verify the driver to continue";
+  $("who").textContent = "· Driver not verified"; $("plate").hidden = true; $("homeSub").textContent = "Verify the driver to continue";
   initFace();
 };
 </script>
