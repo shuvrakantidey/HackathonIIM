@@ -255,11 +255,12 @@ function refreshSteps() {
   $("step").innerHTML = reg ? "<strong>Step 2 of 2: unlock the car</strong>" : "<strong>Step 1 of 2: register your face</strong>";
 }
 function stopScan() { scanning = false; clearTimeout(scanTimer); }
-function startScan() { stopScan(); scanning = true; scanLoop(); }
+function startScan() { console.log("scan started"); stopScan(); scanning = true; scanLoop(); }
 async function scanLoop() {
   if (!scanning) return;
   await attempt(true);
   if (scanning) scanTimer = setTimeout(scanLoop, 700);
+  else console.log("scan stopped");
 }
 const stopCam = () => { stopScan(); const v = $("cam").srcObject; if (v) v.getTracks().forEach((t) => t.stop()); $("cam").srcObject = null; };
 
@@ -293,7 +294,7 @@ function deny() {
 
 async function attempt(auto) {
   let d;
-  try { d = await descriptor(); } catch (e) { return; }
+  try { d = await descriptor(); } catch (e) { console.warn("scan error", e); say("Scan error: " + (e.message || e), true); return; }
   if (isUnlocked) return;
   if (!d) { fails = 0; say(auto ? "Waiting for a face…" : "No face found. Face the camera in good light.", !auto); return; }
   let best = { name: null, dist: 9 };
