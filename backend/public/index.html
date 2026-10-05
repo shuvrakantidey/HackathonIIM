@@ -75,6 +75,44 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
 .plate{display:inline-block;background:#fff;border:2px solid var(--ink);border-radius:6px;padding:1px 10px;margin:0 6px;font:700 15px/1.4 monospace;letter-spacing:2px;color:var(--ink)}
 .plate[hidden]{display:none}
+#car{max-width:none;margin:0;padding:0;display:flex;min-height:100vh;background:#fff;color:#31333F;font-family:"Source Sans Pro","Source Sans 3","Segoe UI",system-ui,sans-serif}
+#car[hidden]{display:none}
+.sl-side{width:300px;flex-shrink:0;background:#F0F2F6;padding:56px 20px 24px}
+.sl-label{display:block;font-size:14px;margin-bottom:6px}
+#scSel{width:100%;padding:9px 10px;border:1px solid transparent;border-radius:8px;background:#fff;font-family:inherit;font-size:16px;color:#31333F}
+.sl-meta{margin:24px 0 12px;font-size:14px;color:#555}
+#car #homeBtn{margin:0;font-family:inherit;font-size:15px;background:#fff;border:1px solid rgba(49,51,63,.2);border-radius:8px;padding:6px 16px}
+.sl-main{flex:1;min-width:0;max-width:1100px;padding:56px 48px 48px}
+.sl-title{font-size:44px;font-weight:700;line-height:1.2;margin:0 0 4px}
+.sl-caption{font-size:14px;color:rgba(49,51,63,.6);margin-bottom:28px}
+.sl-h{font-size:26px;font-weight:600;margin:0 0 12px;color:#31333F}
+.sl-cols{display:grid;gap:32px}
+.sl-cols.a{grid-template-columns:1fr 2fr}
+.sl-cols.b{grid-template-columns:1fr 1fr}
+.sl-hr{border:0;border-top:1px solid rgba(49,51,63,.2);margin:28px 0}
+.sl-lvl{text-align:center;font-size:16px;margin-bottom:-6px}
+#risk svg{width:100%;max-width:320px;display:block;margin:0 auto}
+.sl-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:24px 16px}
+.sl-m small{display:block;font-size:14px}
+.sl-m b{display:block;font-size:34px;font-weight:400;line-height:1.3}
+.sl-m b.sm{font-size:18px;padding-top:10px}
+.sl-box{padding:16px;border-radius:8px;margin-bottom:12px;font-size:16px;line-height:1.5}
+.sl-err{background:rgba(255,43,43,.09);color:#7d353b}
+.sl-warn{background:rgba(255,227,18,.1);color:#926c05}
+.sl-info{background:rgba(28,131,225,.1);color:#004280}
+.sl-ok{background:rgba(33,195,84,.1);color:#177233}
+.sl-btnrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.sl-btnrow .voice{margin:0}
+#car #ask{background:#FF4B4B;color:#fff;border:1px solid #FF4B4B;border-radius:8px;padding:8px 16px;font-family:inherit;font-size:16px;font-weight:400;cursor:pointer}
+#car #replay{margin:0;font-family:inherit;font-size:15px;padding:7px 14px;border-radius:8px}
+#car #src{color:#31333F;font-size:16px;margin-top:16px}
+.sl-sub{color:#808495;font-size:13px}
+#car #steps{font-size:16px;margin:8px 0 0;padding:0}
+#car #steps p{margin:6px 0}
+.sl-trend{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:12px}
+.sl-trend small{display:block;font-size:14px}
+.sl-trend svg{width:100%;height:60px}
+@media(max-width:800px){#car{flex-direction:column}.sl-side{width:auto;padding:24px 16px}.sl-main{padding:24px 16px}.sl-cols.a,.sl-cols.b{grid-template-columns:1fr}.sl-title{font-size:30px}.sl-metrics{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
@@ -110,70 +148,91 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
   </div>
 </section>
 <main id="car" hidden>
-  <header><h1>Saarthi AI</h1><p>Driving safety co-pilot <span class="plate" id="plate" hidden></span> <span id="who">· Driver not verified</span><button id="homeBtn">Home</button></p></header>
-  <nav id="sc" aria-label="Scenarios"></nav>
-  <section class="grid">
-    <div class="panel gauge" id="risk"></div>
-    <div class="panel"><h2>Live readings</h2><div id="metrics"></div></div>
-    <div class="panel"><h2>Alerts</h2><div id="alerts"></div></div>
-    <div class="panel"><h2>Across recent trips</h2><div id="trends"></div></div>
-    <div class="panel wide">
-      <button id="ask">What should I do?</button>
-      <label class="voice"><input type="checkbox" id="voiceOn" checked> Speak advice</label>
-      <button id="replay" hidden>Replay voice</button>
-      <ol id="steps" aria-live="polite"></ol>
-      <div id="src"></div>
+  <aside class="sl-side">
+    <label class="sl-label" for="scSel">Select Driving Scenario</label>
+    <select id="scSel"></select>
+    <div class="sl-meta"><span class="plate" id="plate" hidden></span> <span id="who">· Driver not verified</span></div>
+    <button id="homeBtn">Home</button>
+  </aside>
+  <section class="sl-main">
+    <div class="sl-title">🚗 Saarthi AI — Driving Safety Co-Pilot</div>
+    <div class="sl-caption">Maruti Suzuki Innovation Challenge</div>
+    <div class="sl-cols a">
+      <div><h3 class="sl-h">Risk Score</h3><div id="risk"></div></div>
+      <div><h3 class="sl-h">Live Telemetry</h3><div id="metrics" class="sl-metrics"></div></div>
     </div>
+    <hr class="sl-hr">
+    <div class="sl-cols b">
+      <div><h3 class="sl-h">Active Vehicle Alerts</h3><div id="alerts"></div></div>
+      <div>
+        <h3 class="sl-h">Co-Pilot AI Action Steps</h3>
+        <div class="sl-btnrow">
+          <button id="ask">What should I do? 🤔</button>
+          <label class="voice"><input type="checkbox" id="voiceOn" checked> Speak advice</label>
+          <button id="replay" hidden>Replay voice</button>
+        </div>
+        <div id="src"></div>
+        <div id="steps" aria-live="polite"></div>
+      </div>
+    </div>
+    <hr class="sl-hr">
+    <h3 class="sl-h">Recent Trips Trend</h3>
+    <div id="trends"></div>
   </section>
 </main>
 <script>
 let scenarios = [], trends = null, cur = 0, lastSpoken = [];
 const $ = (id) => document.getElementById(id);
-const cls = { safe: "var(--ok)", caution: "var(--warn)", high: "var(--crit)", critical: "var(--crit)" };
+const COL = { safe: "#1F8A70", caution: "#D99A00", high: "#C8333D", critical: "#C8333D" };
+const BOX = { critical: "sl-err", warning: "sl-warn", info: "sl-info" };
 
 function spark(vals, color) {
   const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
-  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 200},${46 - ((v - min) / span) * 40}`).join(" ");
-  return `<svg viewBox="0 0 200 50" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="3"/></svg>`;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 200},${52 - ((v - min) / span) * 44}`).join(" ");
+  return `<svg viewBox="0 0 200 60" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="3"/></svg>`;
+}
+
+// Gauge: semicircle 0-100 with green / amber / red bands and a navy bar, like the Streamlit gauge
+const gp = (v, r) => { const a = Math.PI * (1 - v / 100); return [110 + r * Math.cos(a), 105 - r * Math.sin(a)]; };
+function garc(v1, v2, r) {
+  const [x1, y1] = gp(v1, r), [xm, ym] = gp((v1 + v2) / 2, r), [x2, y2] = gp(v2, r);
+  return `M${x1.toFixed(1)} ${y1.toFixed(1)} A${r} ${r} 0 0 1 ${xm.toFixed(1)} ${ym.toFixed(1)} A${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+}
+function gauge(score) {
+  const band = (v1, v2, c) => `<path d="${garc(v1, v2, 76)}" fill="none" stroke="${c}" stroke-width="22"/>`;
+  const ticks = [0, 20, 40, 60, 80, 100].map((v) => { const [x, y] = gp(v, 98); return `<text x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="middle" font-size="9" fill="#808495">${v}</text>`; }).join("");
+  return `<svg viewBox="0 0 220 125">${band(0, 30, "#1F8A70")}${band(30, 70, "#D99A00")}${band(70, 100, "#C8333D")}` +
+    (score > 0 ? `<path d="${garc(0, score, 76)}" fill="none" stroke="#1D3557" stroke-width="14"/>` : "") +
+    `${ticks}<text x="110" y="100" text-anchor="middle" font-size="36" fill="#31333F">${score}</text></svg>`;
 }
 
 function render() {
   const s = scenarios[cur], d = s.data, a = s.analysis;
-  document.querySelectorAll("#sc button").forEach((b, i) => b.setAttribute("aria-pressed", i === cur));
+  $("scSel").value = cur;
 
-  const arc = 251.3 * (1 - a.score / 100);
-  $("risk").innerHTML = `<h2>Risk level</h2>
-    <svg viewBox="0 0 200 120"><path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="#E4E8ED" stroke-width="16" stroke-linecap="round"/>
-    <path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="${cls[a.level]}" stroke-width="16" stroke-linecap="round" stroke-dasharray="251.3" stroke-dashoffset="${arc}"/>
-    <text x="100" y="92" text-anchor="middle" font-size="44" font-weight="700" fill="#16202E">${a.score}</text></svg>
-    <div class="lvl ${a.level}">${a.level[0].toUpperCase() + a.level.slice(1)}</div>`;
+  $("risk").innerHTML = `<div class="sl-lvl">Level: ${a.level.toUpperCase()}</div>${gauge(a.score)}`;
 
-  const m = [
-    ["Fatigue", d.fatigue + "%", d.fatigue, 100, a.status.fatigue],
-    ["Driving time", d.drivingHours + " h", d.drivingHours, 6, a.status.drivingHours],
-    ["Distraction", d.distraction + "%", d.distraction, 100, a.status.distraction],
-    ["Tyre pressure", d.tyrePressure + " PSI", d.tyrePressure, 40, a.status.tyrePressure],
-    ["Engine temp", d.engineTemp + " °C", d.engineTemp, 120, a.status.engineTemp],
-  ];
-  $("metrics").innerHTML = m.map(([n, t, v, max, st]) =>
-    `<div class="row"><span>${n}</span><div class="bar"><i class="${st}-bg" style="width:${Math.min(v / max, 1) * 100}%"></i></div><b>${t}</b></div>`).join("") +
-    `<div class="row"><span>Conditions</span><span style="grid-column:2/4">Rain: ${d.rain} · ${d.isNight ? "Night" : "Day"}</span></div>`;
+  const rain = d.rain[0].toUpperCase() + d.rain.slice(1);
+  const m = [["Fatigue", d.fatigue + "%"], ["Driving Time", d.drivingHours + " hrs"], ["Distraction", d.distraction + "%"],
+    ["Tyre Pressure", d.tyrePressure + " PSI"], ["Engine Temp", d.engineTemp + " °C"]];
+  $("metrics").innerHTML = m.map(([n, v]) => `<div class="sl-m"><small>${n}</small><b>${v}</b></div>`).join("") +
+    `<div class="sl-m"><small>Environment</small><b class="sm">${d.isNight ? "Night" : "Day"} | Rain: ${rain}</b></div>`;
 
-  $("alerts").innerHTML = secHtml() + (a.alerts.length
-    ? a.alerts.map((x) => `<div class="alert ${x.severity}"><strong>${x.title}</strong><span>${x.detail}</span></div>`).join("")
-    : `<div class="empty">All clear. No alerts.</div>`);
+  const sec = secEvents.map((t) => `<div class="sl-box sl-err"><b>Unauthorized access attempt</b>: Unknown face rejected at ${t}</div>`).join("");
+  const list = a.alerts.map((x) => `<div class="sl-box ${BOX[x.severity]}"><b>${x.title}</b>: ${x.detail}</div>`).join("");
+  $("alerts").innerHTML = sec + list || `<div class="sl-box sl-ok">All systems nominal. No critical alerts detected.</div>`;
 
-  $("steps").innerHTML = ""; $("src").textContent = "";
+  $("steps").innerHTML = ""; $("src").innerHTML = "";
   if ("speechSynthesis" in window) speechSynthesis.cancel();
   lastSpoken = []; $("replay").hidden = true;
 }
 
 function renderTrends() {
   const h = trends.history;
-  $("trends").innerHTML = `<div class="trend">
+  $("trends").innerHTML = `<div class="sl-trend">
     <div><small>Tyre pressure (PSI)</small>${spark(h.map((x) => x.tyre), "#D99A00")}</div>
     <div><small>Battery health (%)</small>${spark(h.map((x) => x.battery), "#C8333D")}</div></div>` +
-    trends.messages.map((t) => `<div class="alert warning"><span style="color:var(--ink)">${t}</span></div>`).join("");
+    trends.messages.map((t) => `<div class="sl-box sl-warn">${t}</div>`).join("");
 }
 
 const s_level = () => scenarios[cur].analysis.level;
@@ -192,21 +251,21 @@ $("ask").onclick = async () => {
   try {
     const r = await fetch("/api/advice", { method: "POST", body: JSON.stringify({ index: cur }) });
     const j = await r.json();
-    $("steps").innerHTML = j.steps.map((t) => `<li>${t}</li>`).join("");
-    $("src").textContent = j.source === "ai" ? "Advice generated by AI" : "Offline advice from safety rules";
+    $("steps").innerHTML = j.steps.map((t, i) => `<p><b>${i + 1}.</b> ${t}</p>`).join("");
+    $("src").innerHTML = `<b>Source:</b> <i>SAARTHI AI SAFETY ENGINE</i> <span class="sl-sub">(${j.source === "ai" ? "AI-generated" : "offline safety rules"})</span>`;
     lastSpoken = s_level() === "critical" ? ["Critical warning.", ...j.steps] : j.steps;
     $("replay").hidden = false; speak(lastSpoken);
   } catch {
-    $("steps").innerHTML = "<li>Could not reach the server. Slow down and drive carefully.</li>";
+    $("steps").innerHTML = "<p>Could not reach the server. Slow down and drive carefully.</p>";
   }
-  btn.disabled = false; btn.textContent = "What should I do?";
+  btn.disabled = false; btn.textContent = "What should I do? 🤔";
 };
 
 (async () => {
   scenarios = await (await fetch("/api/scenarios")).json();
   trends = await (await fetch("/api/trends")).json();
-  $("sc").innerHTML = scenarios.map((s, i) => `<button aria-pressed="false" data-i="${i}">${s.name}</button>`).join("");
-  $("sc").onclick = (e) => { if (e.target.dataset.i) { cur = +e.target.dataset.i; render(); } };
+  $("scSel").innerHTML = scenarios.map((s, i) => `<option value="${i}">${s.name}</option>`).join("");
+  $("scSel").onchange = () => { cur = +$("scSel").value; render(); };
   render(); renderTrends();
 })();
 
