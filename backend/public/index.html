@@ -113,6 +113,8 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 .sl-trend small{display:block;font-size:14px}
 .sl-trend svg{width:100%;height:60px}
 @media(max-width:800px){#car{flex-direction:column}.sl-side{width:auto;padding:24px 16px}.sl-main{padding:24px 16px}.sl-cols.a,.sl-cols.b{grid-template-columns:1fr}.sl-title{font-size:30px}.sl-metrics{grid-template-columns:1fr 1fr}}
+#padlock.blink{animation:pulse .8s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 </style>
 </head>
 <body>
@@ -306,7 +308,7 @@ $("openCar").onclick = () => show("car");
 const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/";
 const KEY = "saarthi_drivers", THRESHOLD = 0.5, MAX_FAILS = 5;
 const secEvents = [];
-let fails = 0, modelsReady = false, scanning = false, scanTimer = null;
+let fails = 0, blinkFails = 0, modelsReady = false, scanning = false, scanTimer = null;
 const drivers = () => JSON.parse(localStorage.getItem(KEY) || "[]");
 const say = (t, bad) => { $("lockmsg").textContent = t; $("lockmsg").className = bad ? "bad" : ""; };
 const secHtml = () => secEvents.map((t) =>
@@ -344,10 +346,10 @@ async function descriptor() {
   return r ? r.descriptor : null;
 }
 
-function deny() {
-  stopScan(); secEvents.push(new Date().toLocaleTimeString());
+function deny(reason) {
+  stopScan(); secEvents.push(new Date().toLocaleTimeString() + (reason ? " (" + reason + ")" : ""));
   $("padlock").classList.add("denied"); denySound();
-  say("Unknown driver. Access denied and owner alert recorded (simulated).", true);
+  say(reason ? "Blink check failed repeatedly - possible photo attack. Access denied and owner alert recorded (simulated)." : "Unknown driver. Access denied and owner alert recorded (simulated).", true);
   $("unlockBtn").disabled = true;
   setTimeout(() => {
     fails = 0; $("padlock").classList.remove("denied");
@@ -355,21 +357,67 @@ function deny() {
   }, 15000);
 }
 
+// ---- Blink check (liveness): a photo cannot blink ----
+function blinkDetector() {
+  const seen = []; let base = 0, closed = false;
+  return (e) => {
+    if (seen.length < 4) { seen.push(e); base = Math.max(...seen); return false; }  // learn the open-eye level
+    if (!closed) { if (e > base) base = e; if (base >= 0.15 && e < base * 0.72) closed = true; return false; }
+    return e > base * 0.85;  // eyes closed, then open again = one blink
+  };
+}
+const eyeAR = (p) => { const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y); return (d(p[1], p[5]) + d(p[2], p[4])) / (2 * d(p[0], p[3])); };
+async function eyeRatio() {
+  const r = await faceapi.detectSingleFace($("cam"), new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })).withFaceLandmarks();
+  if (!r) return null;
+  return (eyeAR(r.landmarks.getLeftEye()) + eyeAR(r.landmarks.getRightEye())) / 2;
+}
+async function waitForBlink(ms) {
+  const end = Date.now() + ms, feed = blinkDetector();
+  while (Date.now() < end && $("cam").srcObject && !isUnlocked) {
+    let e = null;
+    try { e = await eyeRatio(); } catch (x) {}
+    if (e === null) { await new Promise((r) => setTimeout(r, 40)); continue; }
+    if (feed(e)) return true;
+  }
+  return false;
+}
+async function blinkThenUnlock(best) {
+  $("padlock").classList.add("blink");
+  try {
+    say("Face recognised. Now blink once to unlock…");
+    const ok = await waitForBlink(6000);
+    if (isUnlocked || !$("cam").srcObject) return;
+    if (!ok) {
+      blinkFails++;
+      if (blinkFails >= 3) { blinkFails = 0; return deny("blink check failed, possible photo"); }
+      return say(`No blink detected (${blinkFails}/3). Look at the camera and blink naturally.`, true);
+    }
+    const d = await descriptor();  // same person still in front of the camera?
+    if (!d || faceapi.euclideanDistance(d, Float32Array.from(best.d)) >= THRESHOLD) {
+      fails++; say("Face changed during the check. Try again.", true);
+      if (fails >= MAX_FAILS) deny();
+      return;
+    }
+    blinkFails = 0; unlocked(best.name, best.plate);
+  } finally { $("padlock").classList.remove("blink"); }
+}
+
 async function attempt(auto) {
   let d;
   try { d = await descriptor(); } catch (e) { console.warn("scan error", e); say("Scan error: " + (e.message || e), true); return; }
   if (isUnlocked) return;
   if (!d) { fails = 0; say(auto ? "Waiting for a face…" : "No face found. Face the camera in good light.", !auto); return; }
-  let best = { name: null, plate: null, dist: 9 };
-  drivers().forEach((x) => { const dist = faceapi.euclideanDistance(d, Float32Array.from(x.d)); if (dist < best.dist) best = { name: x.name, plate: x.plate, dist }; });
-  if (best.dist < THRESHOLD) return unlocked(best.name, best.plate);
+  let best = { name: null, plate: null, d: null, dist: 9 };
+  drivers().forEach((x) => { const dist = faceapi.euclideanDistance(d, Float32Array.from(x.d)); if (dist < best.dist) best = { name: x.name, plate: x.plate, d: x.d, dist }; });
+  if (best.dist < THRESHOLD) return blinkThenUnlock(best);
   fails++;
   say(`Face not recognised (${fails}/${MAX_FAILS}).`, true);
   if (fails >= MAX_FAILS) deny();
 }
 
 async function initFace() {
-  stopScan(); fails = 0;
+  stopScan(); fails = 0; blinkFails = 0;
   $("openCar").hidden = true; $("skipBtn").hidden = true; $("relockBtn").hidden = true;
   if (isUnlocked) {
     setLock(true); say("Car already unlocked."); $("step").innerHTML = "<strong>Car unlocked</strong>";
