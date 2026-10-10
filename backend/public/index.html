@@ -343,6 +343,7 @@ const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/";
 const KEY = "saarthi_drivers", THRESHOLD = 0.5, MAX_FAILS = 5;
 const secEvents = [];
 let fails = 0, modelsReady = false, scanning = false, scanTimer = null;
+let relockCountdownTimer = null;
 const drivers = () => JSON.parse(localStorage.getItem(KEY) || "[]");
 const say = (t, bad) => { $("lockmsg").textContent = t; $("lockmsg").className = bad ? "bad" : ""; };
 const secHtml = () => secEvents.map((t) =>
@@ -530,12 +531,67 @@ $("enrollBtn").onclick = async () => {
 
 $("unlockBtn").onclick = () => { if (!drivers().length) return say("Register a driver first.", true); attempt(false); };
 $("skipBtn").onclick = () => unlocked(null);
+
 $("relockBtn").onclick = () => {
-  if (currentDriver) logEvent("lock", currentDriver.name, currentDriver.plate);
-  currentDriver = null; isUnlocked = false; $("goCar").hidden = true;
-  $("who").textContent = "· Driver not verified"; $("plate").hidden = true; $("homeSub").textContent = "Verify the driver to continue";
-  initFace();
+  if (currentDriver) {
+    logEvent("lock", currentDriver.name, currentDriver.plate);
+  }
+
+  // Stop scanning and cancel any previous countdown.
+  stopScan();
+  clearInterval(relockCountdownTimer);
+
+  currentDriver = null;
+  isUnlocked = false;
+
+  $("goCar").hidden = true;
+  $("who").textContent = "· Driver not verified";
+  $("plate").hidden = true;
+  $("homeSub").textContent = "Verify the driver to continue";
+
+  // Keep the car locked during the cooldown.
+  setLock(false);
+
+  let seconds = 20;
+
+  $("unlockBtn").disabled = true;
+  $("enrollBtn").disabled = true;
+  $("unlockBtn").hidden = false;
+
+  const updateCountdown = () => {
+    say(
+      `Please remove your face from the camera to ensure the car is locked properly. Auto-unlock will begin in ${seconds} second${seconds === 1 ? "" : "s"}…`
+    );
+  };
+
+  updateCountdown();
+
+  relockCountdownTimer = setInterval(() => {
+    seconds--;
+
+    if (seconds > 0) {
+      updateCountdown();
+      return;
+    }
+
+    clearInterval(relockCountdownTimer);
+    relockCountdownTimer = null;
+
+    if (isUnlocked || !$("cam").srcObject) return;
+
+    $("unlockBtn").disabled = false;
+    $("enrollBtn").disabled = false;
+
+    say("Cooldown complete. Auto-scanning…");
+    startScan();
+  }, 1000);
+
+  // Reinitialize the camera only if it is not already running.
+  if (!$("cam").srcObject) {
+    initFace();
+  }
 };
+
 
 // ---- Owner dashboard (password protected, log is kept on the server) ----
 let ownerPw = "", ownerTimer = null, currentDriver = null;
