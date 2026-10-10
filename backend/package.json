@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Saarthi AI driving safety co-pilot",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "build": "g++ -O2 -std=c++17 -o owner_tool owner_tool.cpp || echo 'C++ build skipped: using the Node.js fallback'",
+    "postinstall": "npm run build"
+  },
   "engines": { "node": ">=18" }
 }

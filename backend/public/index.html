@@ -128,6 +128,13 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 .ev{font-weight:600;white-space:nowrap}.ev.unlock{color:#1F8A70}.ev.lock{color:#1D3557}.ev.denied{color:#C8333D}
 .owner-link{margin-top:28px}
 .owner-link button{background:none;border:0;color:var(--mute);text-decoration:underline;cursor:pointer;font:inherit}
+.og{max-width:420px}
+.og p{margin:6px 0}
+.og-tabs{display:flex;gap:8px;margin-bottom:12px}
+.og-tabs button.on{background:#31333F;color:#fff;border-color:#31333F}
+.og button{margin-top:6px;margin-right:6px}
+.pwbox{font:700 26px/1.4 monospace;letter-spacing:2px;background:#F0F2F6;border-radius:8px;padding:14px;margin:8px 0;word-break:break-all;user-select:all}
+.og [hidden]{display:none}
 </style>
 </head>
 <body>
@@ -204,11 +211,31 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
   </aside>
   <section class="sl-main">
     <div class="sl-title">🔐 Owner Dashboard</div>
-    <div class="sl-caption">Who unlocked the car, and when</div>
+    <div class="sl-caption">Who unlocked your car, and when</div>
     <div id="ownerGate" class="og">
-      <p>Enter the owner password to view the access log.</p>
-      <input type="password" id="ownerPw" placeholder="Owner password" autocomplete="off">
-      <button id="ownerOpen" class="pri">Open dashboard</button>
+      <div id="tabs" class="og-tabs"><button id="tabLogin" class="on">Owner login</button><button id="tabReg">New owner? Register</button></div>
+      <div id="loginForm">
+        <p>Enter your vehicle number and owner password.</p>
+        <input id="ownerPlate" placeholder="Vehicle number (e.g. WB 02 AB 1234)" maxlength="15" autocomplete="off">
+        <input type="password" id="ownerPw" placeholder="Owner password" autocomplete="off">
+        <button id="ownerOpen" class="pri">Open dashboard</button>
+      </div>
+      <div id="regForm" hidden>
+        <p>Add your details. A strong password is generated for you automatically.</p>
+        <input id="regPlate" placeholder="Vehicle number (e.g. WB 02 AB 1234)" maxlength="15" autocomplete="off">
+        <input id="regName" placeholder="Owner name" maxlength="40" autocomplete="off">
+        <input id="regContact" placeholder="Email or phone (optional)" maxlength="60" autocomplete="off">
+        <button id="regGo" class="pri">Generate my password</button>
+      </div>
+      <div id="regDone" hidden>
+        <div class="sl-box sl-ok"><b>Owner registered</b> for vehicle <span id="doneVeh"></span>.</div>
+        <p>Your password (shown only once):</p>
+        <div id="newPw" class="pwbox"></div>
+        <button id="copyPw">Copy password</button>
+        <div class="sl-box sl-warn">Save it now. It cannot be shown again or recovered.</div>
+        <p class="sl-sub" id="doneNote"></p>
+        <button id="toLogin" class="pri">Continue to login</button>
+      </div>
       <div id="ownerMsg"></div>
     </div>
     <div id="ownerBody" hidden></div>
@@ -328,7 +355,7 @@ function show(v) {
   if (v === "car" && !isUnlocked) v = "driver";
   ["home", "driver", "car", "owner"].forEach((id) => ($(id).hidden = id !== v));
   if (v !== "owner") ownerReset();
-  if (v === "owner") $("ownerPw").focus();
+  if (v === "owner") $("ownerPlate").focus();
   if (v === "driver") initFace(); else stopCam();
   if (v === "car" && scenarios.length) render();
 }
@@ -395,12 +422,7 @@ async function descriptor() {
     return null;
   }
 
-  console.log(
-    "Running face detection:",
-    video.videoWidth,
-    "x",
-    video.videoHeight
-  );
+  console.log("Running face detection:", video.videoWidth, "x", video.videoHeight);
 
   const result = await faceapi
     .detectSingleFace(
@@ -413,17 +435,14 @@ async function descriptor() {
     .withFaceLandmarks()
     .withFaceDescriptor();
 
-  console.log(
-    "Face detection completed:",
-    result ? "Face detected" : "No face detected"
-  );
+  console.log("Face detection completed:", result ? "Face detected" : "No face detected");
 
   return result ? result.descriptor : null;
 }
 
 function deny() {
   stopScan(); secEvents.push(new Date().toLocaleTimeString());
-  logEvent("denied", "Unknown face", "");
+  logEvent("denied", "Unknown face", (drivers()[0] || {}).plate || "");
   $("padlock").classList.add("denied"); denySound();
   say("Unknown driver. Access denied and owner alert recorded (simulated).", true);
   $("unlockBtn").disabled = true;
@@ -462,57 +481,46 @@ async function initFace() {
       await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)]);
       modelsReady = true;
     }
-const video = $("cam");
+    const video = $("cam");
 
-video.srcObject = await navigator.mediaDevices.getUserMedia({
-  audio: false,
-  video: {
-    facingMode: "user",
-    width: { ideal: 640 },
-    height: { ideal: 480 }
-  }
-});
+    video.srcObject = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: "user",
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      }
+    });
 
-await video.play();
+    await video.play();
 
-// Wait for actual video frames, not just camera permission.
-const deadline = Date.now() + 8000;
+    // Wait for actual video frames, not just camera permission.
+    const deadline = Date.now() + 8000;
+    while (
+      (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
 
-while (
-  (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-    video.videoWidth === 0) &&
-  Date.now() < deadline
-) {
-  await new Promise(resolve => setTimeout(resolve, 100));
-}
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
+      throw new Error("Camera opened but no video frames are available.");
+    }
 
-if (
-  video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-  video.videoWidth === 0
-) {
-  throw new Error("Camera opened but no video frames are available.");
-}
+    $("unlockBtn").disabled = $("enrollBtn").disabled = false;
+    refreshSteps();
 
-$("unlockBtn").disabled = $("enrollBtn").disabled = false;
-refreshSteps();
-
-if (drivers().length) {
-  say("Auto scanning…");
-  startScan();
-} else {
-  say("Enter your name and vehicle number, then press Register driver.");
-}
+    if (drivers().length) {
+      say("Auto scanning…");
+      startScan();
+    } else {
+      say("Enter your name and vehicle number, then press Register driver.");
+    }
   } catch (e) {
-  console.error("Face initialization failed:", e);
-
-  say(
-    "Camera or face recognition failed: " +
-    (e.message || "Unknown error"),
-    true
-  );
-
-  $("skipBtn").hidden = false;
-}
+    console.error("Face initialization failed:", e);
+    say("Camera or face recognition failed: " + (e.message || "Unknown error"), true);
+    $("skipBtn").hidden = false;
+  }
 }
 
 $("enrollBtn").onclick = async () => {
@@ -593,8 +601,8 @@ $("relockBtn").onclick = () => {
 };
 
 
-// ---- Owner dashboard (password protected, log is kept on the server) ----
-let ownerPw = "", ownerTimer = null, currentDriver = null;
+// ---- Owner area: register (password is generated for you) and log in per vehicle ----
+let ownerToken = "", ownerTimer = null, currentDriver = null;
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function logEvent(type, name, plate) {
   try { fetch("/api/log", { method: "POST", body: JSON.stringify({ type, name, plate }) }).catch(() => {}); } catch (e) {}
@@ -602,49 +610,87 @@ function logEvent(type, name, plate) {
 const fmt = (iso) => new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
 const dur = (s) => (s === null || s === undefined ? "" : s < 60 ? s + " s" : Math.floor(s / 60) + " min " + (s % 60) + " s");
 const EV = { unlock: ["🔓 Unlocked", "unlock"], lock: ["🔒 Locked again", "lock"], denied: ["🚫 Access denied", "denied"] };
+const post = (url, body) => fetch(url, { method: "POST", body: JSON.stringify(body) });
 
+function tab(which) {
+  $("loginForm").hidden = which !== "login"; $("regForm").hidden = which !== "reg"; $("regDone").hidden = true;
+  $("tabLogin").classList.toggle("on", which === "login"); $("tabReg").classList.toggle("on", which === "reg");
+  $("tabs").hidden = false; $("ownerMsg").textContent = "";
+}
 function ownerReset() {
-  ownerPw = ""; clearInterval(ownerTimer);
-  $("ownerBody").hidden = true; $("ownerGate").hidden = false; $("ownerPw").value = "";
+  ownerToken = ""; clearInterval(ownerTimer);
+  $("ownerBody").hidden = true; $("ownerGate").hidden = false; $("ownerPw").value = ""; $("newPw").textContent = "";
+  tab("login");
 }
 
 function renderOwner(j) {
   const st = j.stats, c = st.current;
-  const warn = j.defaultPassword ? `<div class="sl-box sl-warn">The owner password is still the default. Set the <b>OWNER_PASSWORD</b> variable on your host to change it.</div>` : "";
   const now = c.state === "unlocked"
-    ? `<div class="sl-box sl-ok"><b>Car is UNLOCKED</b> by ${esc(c.name)}${c.plate ? " (" + esc(c.plate) + ")" : ""} since ${fmt(c.since)}.</div>`
+    ? `<div class="sl-box sl-ok"><b>Car is UNLOCKED</b> by ${esc(c.name)} since ${fmt(c.since)}.</div>`
     : `<div class="sl-box sl-info"><b>Car is LOCKED.</b></div>`;
   const stat = [["Times unlocked", st.unlocks], ["Different drivers", st.drivers], ["Locked again", st.locks], ["Denied attempts", st.denied]];
-  const rows = j.events.map((e) => `<tr><td>${fmt(e.time)}</td><td>${esc(e.name)}</td><td>${esc(e.plate || "-")}</td>` +
+  const rows = j.events.map((e) => `<tr><td>${fmt(e.time)}</td><td>${esc(e.name)}</td>` +
     `<td class="ev ${EV[e.type][1]}">${EV[e.type][0]}</td><td>${e.type === "lock" && e.durationSec !== null ? "Was unlocked for " + dur(e.durationSec) : ""}</td></tr>`).join("");
-  $("ownerBody").innerHTML = warn + now +
+  $("ownerBody").innerHTML =
+    `<div class="sl-box sl-info">Owner: <b>${esc(j.owner.name)}</b> · Vehicle <span class="plate">${esc(j.owner.plate)}</span></div>` + now +
     `<div class="sl-metrics" style="margin:16px 0 8px">${stat.map(([n, v]) => `<div class="sl-m"><small>${n}</small><b>${v}</b></div>`).join("")}</div>` +
     `<hr class="sl-hr"><h3 class="sl-h">Access log</h3>` +
-    (rows ? `<div class="sl-tablewrap"><table class="sl-table"><thead><tr><th>Date and time</th><th>Driver</th><th>Vehicle</th><th>Event</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table></div>`
-          : `<div class="sl-box sl-info">No activity yet.</div>`) +
-    `<p class="sl-sub">Updates every 5 seconds. Times are shown in your device's time zone.</p>`;
+    (rows ? `<div class="sl-tablewrap"><table class="sl-table"><thead><tr><th>Date and time</th><th>Driver</th><th>Event</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table></div>`
+          : `<div class="sl-box sl-info">No activity yet for this vehicle.</div>`) +
+    `<p class="sl-sub">Updates every 5 seconds. Times are shown in your device's time zone. This page shows only your vehicle.</p>`;
 }
 
 async function loadOwner() {
   try {
-    const r = await fetch("/api/log", { headers: { "x-owner-password": ownerPw } });
-    if (r.status === 401) { ownerReset(); $("ownerMsg").textContent = "Wrong password."; return false; }
-    if (r.status === 429) { ownerReset(); $("ownerMsg").textContent = "Too many wrong attempts. Wait a minute and try again."; return false; }
+    const r = await fetch("/api/log", { headers: { "x-owner-token": ownerToken } });
+    if (r.status === 401) { ownerReset(); $("ownerMsg").textContent = "Session expired. Please log in again."; return false; }
     renderOwner(await r.json()); return true;
   } catch (e) { $("ownerMsg").textContent = "Could not reach the server."; return false; }
 }
 
 async function openOwner() {
-  ownerPw = $("ownerPw").value;
-  if (!ownerPw) return ($("ownerMsg").textContent = "Enter the password.");
-  $("ownerMsg").textContent = "";
-  if (await loadOwner()) {
-    $("ownerGate").hidden = true; $("ownerBody").hidden = false;
-    clearInterval(ownerTimer); ownerTimer = setInterval(loadOwner, 5000);
-  }
+  const plate = $("ownerPlate").value.trim(), password = $("ownerPw").value;
+  if (!plate || !password) return ($("ownerMsg").textContent = "Enter the vehicle number and the password.");
+  $("ownerMsg").textContent = "Checking…";
+  try {
+    const r = await post("/api/owner/login", { plate, password });
+    if (r.status === 429) return ($("ownerMsg").textContent = "Too many wrong attempts. Wait a minute and try again.");
+    if (!r.ok) return ($("ownerMsg").textContent = "Wrong vehicle number or password.");
+    ownerToken = (await r.json()).token; $("ownerPw").value = "";
+    if (await loadOwner()) {
+      $("ownerMsg").textContent = ""; $("ownerGate").hidden = true; $("ownerBody").hidden = false;
+      clearInterval(ownerTimer); ownerTimer = setInterval(loadOwner, 5000);
+    }
+  } catch (e) { $("ownerMsg").textContent = "Could not reach the server."; }
 }
+
+async function registerOwner() {
+  const plate = $("regPlate").value.trim(), name = $("regName").value.trim(), contact = $("regContact").value.trim();
+  if (!plate || !name) return ($("ownerMsg").textContent = "Enter the vehicle number and the owner name.");
+  $("ownerMsg").textContent = "Generating your password…";
+  try {
+    const r = await post("/api/owner/register", { plate, name, contact });
+    const j = await r.json();
+    if (!r.ok) return ($("ownerMsg").textContent = j.error || "Could not register.");
+    $("ownerMsg").textContent = "";
+    $("regForm").hidden = true; $("tabs").hidden = true; $("regDone").hidden = false;
+    $("doneVeh").textContent = j.plate; $("newPw").textContent = j.password;
+    $("doneNote").textContent = `Generated by the ${j.engine} security module. Only a scrambled hash is stored on the server, so this password cannot be recovered.`;
+    $("ownerPlate").value = j.plate;
+    $("regPlate").value = $("regName").value = $("regContact").value = "";
+  } catch (e) { $("ownerMsg").textContent = "Could not reach the server."; }
+}
+
 $("ownerOpen").onclick = openOwner;
 $("ownerPw").onkeydown = (e) => { if (e.key === "Enter") openOwner(); };
+$("regGo").onclick = registerOwner;
+$("tabLogin").onclick = () => tab("login");
+$("tabReg").onclick = () => tab("reg");
+$("toLogin").onclick = () => { $("newPw").textContent = ""; tab("login"); $("ownerPw").focus(); };
+$("copyPw").onclick = async () => {
+  try { await navigator.clipboard.writeText($("newPw").textContent); $("copyPw").textContent = "Copied ✓"; setTimeout(() => ($("copyPw").textContent = "Copy password"), 2000); }
+  catch (e) { $("copyPw").textContent = "Select and copy it manually"; }
+};
 $("ownerBtn").onclick = () => show("owner");
 $("ownerLink").onclick = () => show("owner");
 $("ownerBack").onclick = () => show(isUnlocked ? "car" : "home");

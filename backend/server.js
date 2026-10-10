@@ -1,5 +1,4 @@
 // Zero-dependency server. Run: node server.js  (Node 18+). Uses the PORT env var when hosted, else 3000.
-// Owner password: set the OWNER_PASSWORD environment variable (defaults to "saarthi123" for local testing only).
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -8,84 +7,104 @@ const scenarios = require("./scenarios");
 const tripHistory = require("./vehiclehealth");
 const { analyze, trends } = require("./ruleEngine");
 const { getAdvice } = require("./llm");
+const ownerTool = require("./ownerTool");
 
 const trendInfo = trends(tripHistory);
-const OWNER_PASSWORD = process.env.OWNER_PASSWORD || "saarthi123";
-const sha = (t) => crypto.createHash("sha256").update(String(t)).digest();
-const passwordOk = (req) => crypto.timingSafeEqual(sha(req.headers["x-owner-password"] || ""), sha(OWNER_PASSWORD));
-
-// Access log (kept in memory: it resets when the server restarts or a free host goes to sleep)
-const events = [], lastUnlock = {};
-let failTimes = [];
+const DATA_FILE = path.join(__dirname, "data.json");
 const TYPES = ["unlock", "lock", "denied"];
-const clean = (t, n) => String(t || "").replace(/[\u0000-\u001f]/g, "").slice(0, n);
 
-function stats() {
-  const unlocks = events.filter((e) => e.type === "unlock");
-  const last = [...events].reverse().find((e) => e.type !== "denied");
-  return {
-    unlocks: unlocks.length,
-    drivers: new Set(unlocks.map((e) => e.name)).size,
-    locks: events.filter((e) => e.type === "lock").length,
-    denied: events.filter((e) => e.type === "denied").length,
-    current: last && last.type === "unlock" ? { state: "unlocked", name: last.name, plate: last.plate, since: last.time } : { state: "locked" },
-  };
-}
+// ---- Stored data: owners (password HASHES only) and the access log ----
+let owners = {}, events = [];
+try { ({ owners = {}, events = [] } = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"))); } catch (e) {}
+const save = () => { try { fs.writeFileSync(DATA_FILE, JSON.stringify({ owners, events })); } catch (e) {} };
+const lastUnlock = {}, sessions = new Map(), failTimes = {};
 
+const normPlate = (p) => String(p || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const clean = (t, n) => String(t || "").replace(/[\u0000-\u001f]/g, "").trim().slice(0, n);
 const send = (res, code, body, type = "application/json") => {
   res.writeHead(code, { "Content-Type": type });
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 };
+function readJson(req, res, cb) {
+  let body = "";
+  req.on("data", (c) => { body += c; if (body.length > 3000) req.destroy(); });
+  req.on("end", async () => {
+    try { await cb(JSON.parse(body || "{}")); } catch (e) { send(res, 400, { error: "Bad request" }); }
+  });
+}
+
+function statsFor(list) {
+  const unlocks = list.filter((e) => e.type === "unlock");
+  const last = [...list].reverse().find((e) => e.type !== "denied");
+  return {
+    unlocks: unlocks.length,
+    drivers: new Set(unlocks.map((e) => e.name)).size,
+    locks: list.filter((e) => e.type === "lock").length,
+    denied: list.filter((e) => e.type === "denied").length,
+    current: last && last.type === "unlock" ? { state: "unlocked", name: last.name, plate: last.plate, since: last.time } : { state: "locked" },
+  };
+}
 
 http.createServer((req, res) => {
   if (req.method === "GET" && req.url === "/api/scenarios")
     return send(res, 200, scenarios.map((s) => ({ ...s, analysis: analyze(s.data) })));
   if (req.method === "GET" && req.url === "/api/trends") return send(res, 200, trendInfo);
 
-  if (req.method === "POST" && req.url === "/api/advice") {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", async () => {
-      try {
-        const s = scenarios[JSON.parse(body).index];
-        if (!s) return send(res, 400, { error: "Unknown scenario" });
-        send(res, 200, await getAdvice(s, analyze(s.data), trendInfo));
-      } catch (e) {
-        send(res, 400, { error: "Bad request" });
-      }
+  if (req.method === "POST" && req.url === "/api/advice")
+    return readJson(req, res, async (b) => {
+      const s = scenarios[b.index];
+      if (!s) return send(res, 400, { error: "Unknown scenario" });
+      send(res, 200, await getAdvice(s, analyze(s.data), trendInfo));
     });
-    return;
-  }
 
   // Driver page reports unlock / lock / denied events (time is stamped here on the server)
-  if (req.method === "POST" && req.url === "/api/log") {
-    let body = "";
-    req.on("data", (c) => { body += c; if (body.length > 2000) req.destroy(); });
-    req.on("end", () => {
-      try {
-        const b = JSON.parse(body);
-        if (!TYPES.includes(b.type)) return send(res, 400, { error: "Bad event" });
-        const now = Date.now(), name = clean(b.name, 40) || "Unknown";
-        const ev = { type: b.type, name, plate: clean(b.plate, 20), time: new Date(now).toISOString(), durationSec: null };
-        if (b.type === "unlock") lastUnlock[name] = now;
-        if (b.type === "lock" && lastUnlock[name]) { ev.durationSec = Math.round((now - lastUnlock[name]) / 1000); delete lastUnlock[name]; }
-        events.push(ev);
-        if (events.length > 500) events.shift();
-        send(res, 200, { ok: true });
-      } catch (e) {
-        send(res, 400, { error: "Bad request" });
-      }
+  if (req.method === "POST" && req.url === "/api/log")
+    return readJson(req, res, (b) => {
+      if (!TYPES.includes(b.type)) return send(res, 400, { error: "Bad event" });
+      const now = Date.now(), name = clean(b.name, 40) || "Unknown", plate = clean(b.plate, 20), key = normPlate(plate);
+      const ev = { type: b.type, name, plate, plateKey: key, time: new Date(now).toISOString(), durationSec: null };
+      const who = key + "|" + name;
+      if (b.type === "unlock") lastUnlock[who] = now;
+      if (b.type === "lock" && lastUnlock[who]) { ev.durationSec = Math.round((now - lastUnlock[who]) / 1000); delete lastUnlock[who]; }
+      events.push(ev);
+      if (events.length > 1000) events.shift();
+      save();
+      send(res, 200, { ok: true });
     });
-    return;
-  }
 
-  // Owner reads the log (password required)
+  // Owner registration: the password is generated by the server (C++ module) and shown ONCE
+  if (req.method === "POST" && req.url === "/api/owner/register")
+    return readJson(req, res, async (b) => {
+      const plate = clean(b.plate, 15).toUpperCase().replace(/\s+/g, " "), key = normPlate(plate), name = clean(b.name, 40);
+      if (key.length < 4 || !name) return send(res, 400, { error: "Enter a vehicle number and the owner name." });
+      if (owners[key]) return send(res, 409, { error: "This vehicle number is already registered." });
+      if (Object.keys(owners).length >= 100) return send(res, 503, { error: "Owner limit reached." });
+      const g = await ownerTool.generate();
+      owners[key] = { plate, name, contact: clean(b.contact, 60), salt: g.salt, hash: g.hash, created: new Date().toISOString() };
+      save();
+      send(res, 200, { plate, password: g.password, engine: g.engine });
+    });
+
+  // Owner login: checks the password hash and returns a short session token
+  if (req.method === "POST" && req.url === "/api/owner/login")
+    return readJson(req, res, async (b) => {
+      const key = normPlate(b.plate), now = Date.now();
+      failTimes[key] = (failTimes[key] || []).filter((t) => now - t < 60000);
+      if (failTimes[key].length >= 5) return send(res, 429, { error: "Too many wrong attempts" });
+      const o = owners[key];
+      const ok = o ? await ownerTool.verify(String(b.password || ""), o.salt, o.hash) : (await ownerTool.verify("x", "00", "00"), false);
+      if (!ok) { failTimes[key].push(now); return send(res, 401, { error: "Wrong vehicle number or password" }); }
+      const token = crypto.randomBytes(24).toString("hex");
+      sessions.set(token, { key, expires: now + 15 * 60 * 1000 });
+      send(res, 200, { token });
+    });
+
+  // Owner reads the log of THEIR vehicle only
   if (req.method === "GET" && req.url === "/api/log") {
-    const now = Date.now();
-    failTimes = failTimes.filter((t) => now - t < 60000);
-    if (failTimes.length >= 5) return send(res, 429, { error: "Too many wrong attempts" });
-    if (!passwordOk(req)) { failTimes.push(now); return send(res, 401, { error: "Wrong password" }); }
-    return send(res, 200, { events: [...events].reverse(), stats: stats(), defaultPassword: !process.env.OWNER_PASSWORD });
+    const s = sessions.get(String(req.headers["x-owner-token"] || ""));
+    if (!s || s.expires < Date.now()) return send(res, 401, { error: "Session expired" });
+    const o = owners[s.key], mine = events.filter((e) => e.plateKey === s.key);
+    return send(res, 200, { owner: { name: o.name, plate: o.plate }, events: [...mine].reverse(), stats: statsFor(mine) });
   }
 
   if (req.method === "GET" && (req.url === "/" || req.url === "/index.html"))
