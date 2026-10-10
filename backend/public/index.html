@@ -370,6 +370,7 @@ const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/";
 const KEY = "saarthi_drivers", THRESHOLD = 0.5, MAX_FAILS = 5;
 const secEvents = [];
 let fails = 0, modelsReady = false, scanning = false, scanTimer = null;
+let relockCooldown = false;
 let relockCountdownTimer = null;
 const drivers = () => JSON.parse(localStorage.getItem(KEY) || "[]");
 const say = (t, bad) => { $("lockmsg").textContent = t; $("lockmsg").className = bad ? "bad" : ""; };
@@ -451,8 +452,8 @@ function deny() {
     if (!isUnlocked && $("cam").srcObject) { $("unlockBtn").disabled = false; say("Look at the camera. Scanning…"); startScan(); }
   }, 15000);
 }
-
 async function attempt(auto) {
+  if (relockCooldown || isUnlocked) return;
   let d;
   try { d = await descriptor(); } catch (e) { console.warn("scan error", e); say("Scan error: " + (e.message || e), true); return; }
   if (isUnlocked) return;
@@ -541,6 +542,9 @@ $("unlockBtn").onclick = () => { if (!drivers().length) return say("Register a d
 $("skipBtn").onclick = () => unlocked(null);
 
 $("relockBtn").onclick = () => {
+  stopScan();
+clearInterval(relockCountdownTimer);
+relockCooldown = true;
   if (currentDriver) {
     logEvent("lock", currentDriver.name, currentDriver.plate);
   }
@@ -574,25 +578,24 @@ $("relockBtn").onclick = () => {
 
   updateCountdown();
 
-  relockCountdownTimer = setInterval(() => {
-    seconds--;
+  
+relockCountdownTimer = setInterval(() => {
+  seconds--;
 
-    if (seconds > 0) {
-      updateCountdown();
-      return;
-    }
-
+  if (seconds <= 0) {
     clearInterval(relockCountdownTimer);
     relockCountdownTimer = null;
 
     if (isUnlocked || !$("cam").srcObject) return;
 
-    $("unlockBtn").disabled = false;
-    $("enrollBtn").disabled = false;
-
+    relockCooldown = false;
     say("Cooldown complete. Auto-scanning…");
     startScan();
-  }, 1000);
+    return;
+  }
+
+  updateCountdown();
+}, 1000);
 
   // Reinitialize the camera only if it is not already running.
   if (!$("cam").srcObject) {
