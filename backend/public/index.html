@@ -452,9 +452,18 @@ function deny() {
     if (!isUnlocked && $("cam").srcObject) { $("unlockBtn").disabled = false; say("Look at the camera. Scanning…"); startScan(); }
   }, 15000);
 }
+
 async function attempt(auto) {
-  if (relockCooldown || isUnlocked) return;
+  if (isUnlocked) return;
+
+  // Block automatic scans during cooldown, but allow manual scans.
+  if (relockCooldown && auto) {
+    say("Auto-unlock paused. Manual scan is available.");
+    return;
+  }
+
   let d;
+
   try { d = await descriptor(); } catch (e) { console.warn("scan error", e); say("Scan error: " + (e.message || e), true); return; }
   if (isUnlocked) return;
   if (!d) { fails = 0; say(auto ? "Waiting for a face…" : "No face found. Face the camera in good light.", !auto); return; }
