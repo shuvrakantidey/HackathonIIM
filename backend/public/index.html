@@ -112,7 +112,22 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 .sl-trend{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:12px}
 .sl-trend small{display:block;font-size:14px}
 .sl-trend svg{width:100%;height:60px}
-@media(max-width:800px){#car{flex-direction:column}.sl-side{width:auto;padding:24px 16px}.sl-main{padding:24px 16px}.sl-cols.a,.sl-cols.b{grid-template-columns:1fr}.sl-title{font-size:30px}.sl-metrics{grid-template-columns:1fr 1fr}}
+@media(max-width:800px){#car,#owner{flex-direction:column}.sl-side{width:auto;padding:24px 16px}.sl-main{padding:24px 16px}.sl-cols.a,.sl-cols.b{grid-template-columns:1fr}.sl-title{font-size:30px}.sl-metrics{grid-template-columns:1fr 1fr}}
+#owner{max-width:none;margin:0;padding:0;display:flex;min-height:100vh;background:#fff;color:#31333F;font-family:"Source Sans Pro","Source Sans 3","Segoe UI",system-ui,sans-serif}
+#owner[hidden]{display:none}
+.sl-side button,.og button{font-family:inherit;font-size:15px;background:#fff;border:1px solid rgba(49,51,63,.2);border-radius:8px;padding:6px 16px;cursor:pointer;color:#31333F}
+#car #ownerBtn{display:block;margin:10px 0 0}
+.og{margin:8px 0 20px;max-width:360px}
+.og input{width:100%;padding:9px 10px;border:1px solid rgba(49,51,63,.3);border-radius:8px;font-family:inherit;font-size:16px;margin:8px 0}
+.og button.pri{background:#FF4B4B;border-color:#FF4B4B;color:#fff}
+#ownerMsg{color:#C8333D;margin:8px 0 0;min-height:22px}
+.sl-tablewrap{overflow-x:auto}
+.sl-table{width:100%;border-collapse:collapse;font-size:15px}
+.sl-table th{background:#F0F2F6;text-align:left;padding:8px 10px;font-weight:600;white-space:nowrap}
+.sl-table td{padding:8px 10px;border-bottom:1px solid rgba(49,51,63,.12)}
+.ev{font-weight:600;white-space:nowrap}.ev.unlock{color:#1F8A70}.ev.lock{color:#1D3557}.ev.denied{color:#C8333D}
+.owner-link{margin-top:28px}
+.owner-link button{background:none;border:0;color:var(--mute);text-decoration:underline;cursor:pointer;font:inherit}
 </style>
 </head>
 <body>
@@ -123,6 +138,7 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
     <button class="choice" id="goCar" hidden><strong>Car</strong><span>Vehicle health, risk score and safety advice</span></button>
     <button class="choice" id="goDriver"><strong>Driver</strong><span>Register your face or unlock the car</span></button>
   </div>
+  <p class="owner-link"><button id="ownerLink">Owner login</button></p>
 </section>
 <section id="driver" hidden>
   <div class="lockbox">
@@ -153,6 +169,7 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
     <select id="scSel"></select>
     <div class="sl-meta"><span class="plate" id="plate" hidden></span> <span id="who">· Driver not verified</span></div>
     <button id="homeBtn">Home</button>
+    <button id="ownerBtn">🔐 Owner dashboard</button>
   </aside>
   <section class="sl-main">
     <div class="sl-title">🚗 Saarthi AI — Driving Safety Co-Pilot</div>
@@ -180,6 +197,23 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
     <div id="trends"></div>
   </section>
 </main>
+<section id="owner" hidden>
+  <aside class="sl-side">
+    <div class="sl-label">Owner area</div>
+    <button id="ownerBack">Back</button>
+  </aside>
+  <section class="sl-main">
+    <div class="sl-title">🔐 Owner Dashboard</div>
+    <div class="sl-caption">Who unlocked the car, and when</div>
+    <div id="ownerGate" class="og">
+      <p>Enter the owner password to view the access log.</p>
+      <input type="password" id="ownerPw" placeholder="Owner password" autocomplete="off">
+      <button id="ownerOpen" class="pri">Open dashboard</button>
+      <div id="ownerMsg"></div>
+    </div>
+    <div id="ownerBody" hidden></div>
+  </section>
+</section>
 <script>
 let scenarios = [], trends = null, cur = 0, lastSpoken = [];
 const $ = (id) => document.getElementById(id);
@@ -292,7 +326,9 @@ const setLock = (open) => { $("padlock").classList.remove("denied"); $("padlock"
 let isUnlocked = false;
 function show(v) {
   if (v === "car" && !isUnlocked) v = "driver";
-  ["home", "driver", "car"].forEach((id) => ($(id).hidden = id !== v));
+  ["home", "driver", "car", "owner"].forEach((id) => ($(id).hidden = id !== v));
+  if (v !== "owner") ownerReset();
+  if (v === "owner") $("ownerPw").focus();
   if (v === "driver") initFace(); else stopCam();
   if (v === "car" && scenarios.length) render();
 }
@@ -328,6 +364,8 @@ const stopCam = () => { stopScan(); const v = $("cam").srcObject; if (v) v.getTr
 
 function unlocked(name, plate) {
   fails = 0; isUnlocked = true; stopScan();
+  currentDriver = { name: name || "Demo (face unlock skipped)", plate: plate || "" };
+  logEvent("unlock", currentDriver.name, currentDriver.plate);
   $("goCar").hidden = false; $("homeSub").textContent = "Driver verified. Choose a mode";
   $("who").textContent = name ? "· Driver: " + name : "· Face unlock skipped";
   $("plate").textContent = plate || ""; $("plate").hidden = !plate;
@@ -346,6 +384,7 @@ async function descriptor() {
 
 function deny() {
   stopScan(); secEvents.push(new Date().toLocaleTimeString());
+  logEvent("denied", "Unknown face", "");
   $("padlock").classList.add("denied"); denySound();
   say("Unknown driver. Access denied and owner alert recorded (simulated).", true);
   $("unlockBtn").disabled = true;
@@ -412,10 +451,67 @@ $("enrollBtn").onclick = async () => {
 $("unlockBtn").onclick = () => { if (!drivers().length) return say("Register a driver first.", true); attempt(false); };
 $("skipBtn").onclick = () => unlocked(null);
 $("relockBtn").onclick = () => {
-  isUnlocked = false; $("goCar").hidden = true;
+  if (currentDriver) logEvent("lock", currentDriver.name, currentDriver.plate);
+  currentDriver = null; isUnlocked = false; $("goCar").hidden = true;
   $("who").textContent = "· Driver not verified"; $("plate").hidden = true; $("homeSub").textContent = "Verify the driver to continue";
   initFace();
 };
+
+// ---- Owner dashboard (password protected, log is kept on the server) ----
+let ownerPw = "", ownerTimer = null, currentDriver = null;
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function logEvent(type, name, plate) {
+  try { fetch("/api/log", { method: "POST", body: JSON.stringify({ type, name, plate }) }).catch(() => {}); } catch (e) {}
+}
+const fmt = (iso) => new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+const dur = (s) => (s === null || s === undefined ? "" : s < 60 ? s + " s" : Math.floor(s / 60) + " min " + (s % 60) + " s");
+const EV = { unlock: ["🔓 Unlocked", "unlock"], lock: ["🔒 Locked again", "lock"], denied: ["🚫 Access denied", "denied"] };
+
+function ownerReset() {
+  ownerPw = ""; clearInterval(ownerTimer);
+  $("ownerBody").hidden = true; $("ownerGate").hidden = false; $("ownerPw").value = "";
+}
+
+function renderOwner(j) {
+  const st = j.stats, c = st.current;
+  const warn = j.defaultPassword ? `<div class="sl-box sl-warn">The owner password is still the default. Set the <b>OWNER_PASSWORD</b> variable on your host to change it.</div>` : "";
+  const now = c.state === "unlocked"
+    ? `<div class="sl-box sl-ok"><b>Car is UNLOCKED</b> by ${esc(c.name)}${c.plate ? " (" + esc(c.plate) + ")" : ""} since ${fmt(c.since)}.</div>`
+    : `<div class="sl-box sl-info"><b>Car is LOCKED.</b></div>`;
+  const stat = [["Times unlocked", st.unlocks], ["Different drivers", st.drivers], ["Locked again", st.locks], ["Denied attempts", st.denied]];
+  const rows = j.events.map((e) => `<tr><td>${fmt(e.time)}</td><td>${esc(e.name)}</td><td>${esc(e.plate || "-")}</td>` +
+    `<td class="ev ${EV[e.type][1]}">${EV[e.type][0]}</td><td>${e.type === "lock" && e.durationSec !== null ? "Was unlocked for " + dur(e.durationSec) : ""}</td></tr>`).join("");
+  $("ownerBody").innerHTML = warn + now +
+    `<div class="sl-metrics" style="margin:16px 0 8px">${stat.map(([n, v]) => `<div class="sl-m"><small>${n}</small><b>${v}</b></div>`).join("")}</div>` +
+    `<hr class="sl-hr"><h3 class="sl-h">Access log</h3>` +
+    (rows ? `<div class="sl-tablewrap"><table class="sl-table"><thead><tr><th>Date and time</th><th>Driver</th><th>Vehicle</th><th>Event</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table></div>`
+          : `<div class="sl-box sl-info">No activity yet.</div>`) +
+    `<p class="sl-sub">Updates every 5 seconds. Times are shown in your device's time zone.</p>`;
+}
+
+async function loadOwner() {
+  try {
+    const r = await fetch("/api/log", { headers: { "x-owner-password": ownerPw } });
+    if (r.status === 401) { ownerReset(); $("ownerMsg").textContent = "Wrong password."; return false; }
+    if (r.status === 429) { ownerReset(); $("ownerMsg").textContent = "Too many wrong attempts. Wait a minute and try again."; return false; }
+    renderOwner(await r.json()); return true;
+  } catch (e) { $("ownerMsg").textContent = "Could not reach the server."; return false; }
+}
+
+async function openOwner() {
+  ownerPw = $("ownerPw").value;
+  if (!ownerPw) return ($("ownerMsg").textContent = "Enter the password.");
+  $("ownerMsg").textContent = "";
+  if (await loadOwner()) {
+    $("ownerGate").hidden = true; $("ownerBody").hidden = false;
+    clearInterval(ownerTimer); ownerTimer = setInterval(loadOwner, 5000);
+  }
+}
+$("ownerOpen").onclick = openOwner;
+$("ownerPw").onkeydown = (e) => { if (e.key === "Enter") openOwner(); };
+$("ownerBtn").onclick = () => show("owner");
+$("ownerLink").onclick = () => show("owner");
+$("ownerBack").onclick = () => show(isUnlocked ? "car" : "home");
 </script>
 </body>
 </html>
