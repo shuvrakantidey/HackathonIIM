@@ -135,6 +135,9 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 .og button{margin-top:6px;margin-right:6px}
 .pwbox{font:700 26px/1.4 monospace;letter-spacing:2px;background:#F0F2F6;border-radius:8px;padding:14px;margin:8px 0;word-break:break-all;user-select:all}
 .og [hidden]{display:none}
+#car #checkBtn{display:block;width:100%;background:#FF4B4B;color:#fff;border:1px solid #FF4B4B;border-radius:8px;padding:10px 12px;font-family:inherit;font-size:16px;cursor:pointer}
+#car #checkBtn:disabled{opacity:.7;cursor:wait}
+#lastCheck{margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -172,8 +175,8 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
 </section>
 <main id="car" hidden>
   <aside class="sl-side">
-    <label class="sl-label" for="scSel">Select Driving Scenario</label>
-    <select id="scSel"></select>
+    <button id="checkBtn">🔍 Check health of your car</button>
+    <div class="sl-sub" id="lastCheck"></div>
     <div class="sl-meta"><span class="plate" id="plate" hidden></span> <span id="who">· Driver not verified</span></div>
     <button id="homeBtn">Home</button>
     <button id="ownerBtn">🔐 Owner dashboard</button>
@@ -242,7 +245,7 @@ button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
   </section>
 </section>
 <script>
-let scenarios = [], trends = null, cur = 0, lastSpoken = [];
+let scenarios = [], trends = null, cur = -1, lastSpoken = [];
 const $ = (id) => document.getElementById(id);
 const COL = { safe: "#1F8A70", caution: "#D99A00", high: "#C8333D", critical: "#C8333D" };
 const BOX = { critical: "sl-err", warning: "sl-warn", info: "sl-info" };
@@ -267,9 +270,20 @@ function gauge(score) {
     `${ticks}<text x="110" y="100" text-anchor="middle" font-size="36" fill="#31333F">${score}</text></svg>`;
 }
 
+function renderEmpty() {
+  const sec = secEvents.map((t) => `<div class="sl-box sl-err"><b>Unauthorized access attempt</b>: Unknown face rejected at ${t}</div>`).join("");
+  $("risk").innerHTML = `<div class="sl-box sl-info">Press <b>Check health of your car</b> to scan the vehicle.</div>`;
+  $("metrics").innerHTML = "";
+  $("alerts").innerHTML = sec || `<div class="sl-box sl-info">No health check has been run yet.</div>`;
+  $("steps").innerHTML = ""; $("src").innerHTML = "";
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  lastSpoken = []; $("replay").hidden = true; $("ask").disabled = true;
+}
+
 function render() {
+  if (cur < 0) return renderEmpty();
   const s = scenarios[cur], d = s.data, a = s.analysis;
-  $("scSel").value = cur;
+  $("ask").disabled = false;
 
   $("risk").innerHTML = `<div class="sl-lvl">Level: ${a.level.toUpperCase()}</div>${gauge(a.score)}`;
 
@@ -325,8 +339,20 @@ $("ask").onclick = async () => {
 (async () => {
   scenarios = await (await fetch("/api/scenarios")).json();
   trends = await (await fetch("/api/trends")).json();
-  $("scSel").innerHTML = scenarios.map((s, i) => `<option value="${i}">${s.name}</option>`).join("");
-  $("scSel").onchange = () => { cur = +$("scSel").value; render(); };
+  let checking = false;
+  $("checkBtn").onclick = () => {
+    if (checking || !scenarios.length) return;
+    checking = true;
+    const btn = $("checkBtn");
+    btn.disabled = true; btn.textContent = "🔍 Scanning vehicle…";
+    setTimeout(() => {
+      let n;
+      do { n = Math.floor(Math.random() * scenarios.length); } while (n === cur && scenarios.length > 1);
+      cur = n; render();
+      $("lastCheck").textContent = "Last check: " + new Date().toLocaleTimeString();
+      btn.disabled = false; btn.textContent = "🔍 Check health of your car"; checking = false;
+    }, 900);
+  };
   render(); renderTrends();
 })();
 
@@ -415,7 +441,7 @@ async function scanLoop() {
 const stopCam = () => { stopScan(); const v = $("cam").srcObject; if (v) v.getTracks().forEach((t) => t.stop()); $("cam").srcObject = null; };
 
 function unlocked(name, plate) {
-  fails = 0; isUnlocked = true; stopScan();
+  fails = 0; isUnlocked = true; stopScan(); cur = -1;
   currentDriver = { name: name || "Demo (face unlock skipped)", plate: plate || "" };
   logEvent("unlock", currentDriver.name, currentDriver.plate);
   $("goCar").hidden = false; $("homeSub").textContent = "Driver verified. Choose a mode";
