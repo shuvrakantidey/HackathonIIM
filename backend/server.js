@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const scenarios = require("./scenarios");
 const tripHistory = require("./vehiclehealth");
 const { analyze, trends } = require("./ruleEngine");
-const { getAdvice } = require("./llm");
+const { getAdvice, status: aiStatus } = require("./llm");
 const ownerTool = require("./ownerTool");
 
 const trendInfo = trends(tripHistory);
@@ -49,6 +49,7 @@ http.createServer((req, res) => {
   if (req.method === "GET" && req.url === "/api/scenarios")
     return send(res, 200, scenarios.map((s) => ({ ...s, analysis: analyze(s.data) })));
   if (req.method === "GET" && req.url === "/api/trends") return send(res, 200, trendInfo);
+  if (req.method === "GET" && req.url === "/api/ai-status") return aiStatus().then((v) => send(res, 200, v));
 
   if (req.method === "POST" && req.url === "/api/advice")
     return readJson(req, res, async (b) => {
