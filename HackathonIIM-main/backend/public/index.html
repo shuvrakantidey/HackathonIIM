@@ -614,24 +614,52 @@ $("ask").onclick = async () => {
   btn.disabled = false; btn.textContent = "What should I do? 🤔";
 };
 
+let checking = false;
+$("checkBtn").onclick = async () => {
+  if (checking) return;
+  const btn = $("checkBtn");
+  checking = true;
+  btn.disabled = true;
+  btn.textContent = "🔍 Scanning vehicle…";
+  try {
+    if (!Array.isArray(scenarios) || !scenarios.length) {
+      const r = await fetch("/api/scenarios");
+      if (!r.ok) throw new Error("Could not load health-check scenarios (HTTP " + r.status + ")");
+      scenarios = await r.json();
+    }
+    if (!Array.isArray(scenarios) || !scenarios.length) throw new Error("No health-check scenarios were returned by the server.");
+    // Demo only: this selects a simulated scenario, not readings from real car sensors.
+    await new Promise(resolve => setTimeout(resolve, 900));
+    let n;
+    do { n = Math.floor(Math.random() * scenarios.length); } while (n === cur && scenarios.length > 1);
+    cur = n;
+    render();
+    $("lastCheck").textContent = "Last check: " + new Date().toLocaleTimeString();
+  } catch (e) {
+    console.error("Vehicle health check failed:", e);
+    $("risk").innerHTML = '<div class="sl-box sl-err"><b>Health check failed.</b> ' + (e.message || "Could not load vehicle data.") + ' Check that the Saarthi AI backend is running, then refresh.</div>';
+    $("alerts").innerHTML = '<div class="sl-box sl-info">No health result is available because the check did not complete.</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔍 Check health of your car";
+    checking = false;
+  }
+};
+
 (async () => {
-  scenarios = await (await fetch("/api/scenarios")).json();
-  trends = await (await fetch("/api/trends")).json();
-  let checking = false;
-  $("checkBtn").onclick = () => {
-    if (checking || !scenarios.length) return;
-    checking = true;
-    const btn = $("checkBtn");
-    btn.disabled = true; btn.textContent = "🔍 Scanning vehicle…";
-    setTimeout(() => {
-      let n;
-      do { n = Math.floor(Math.random() * scenarios.length); } while (n === cur && scenarios.length > 1);
-      cur = n; render();
-      $("lastCheck").textContent = "Last check: " + new Date().toLocaleTimeString();
-      btn.disabled = false; btn.textContent = "🔍 Check health of your car"; checking = false;
-    }, 900);
-  };
-  render(); renderTrends();
+  try {
+    const [scenarioResponse, trendsResponse] = await Promise.all([fetch("/api/scenarios"), fetch("/api/trends")]);
+    if (!scenarioResponse.ok) throw new Error("Could not load scenarios (HTTP " + scenarioResponse.status + ")");
+    if (!trendsResponse.ok) throw new Error("Could not load trends (HTTP " + trendsResponse.status + ")");
+    scenarios = await scenarioResponse.json();
+    trends = await trendsResponse.json();
+    render();
+    renderTrends();
+  } catch (e) {
+    console.error("Saarthi AI data initialization failed:", e);
+    $("risk").innerHTML = '<div class="sl-box sl-err"><b>Backend data failed to load.</b> ' + (e.message || "Start the backend and refresh this page.") + '</div>';
+    $("alerts").innerHTML = '<div class="sl-box sl-info">The dashboard is waiting for backend data. Start the Saarthi AI server and refresh.</div>';
+  }
 })();
 
 // ---- Sounds (generated in the browser, no files) ----
@@ -1089,4 +1117,3 @@ $("mapMe").onclick = () => {
 </script>
 </body>
 </html>
-
