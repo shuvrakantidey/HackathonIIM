@@ -40,49 +40,85 @@ document.addEventListener("DOMContentLoaded", () => {
     show('car'); action(); return true;
   };
   const runCommand = (raw) => {
-    const text = raw.toLowerCase().trim().replace(/[.!?,]/g, ' ' ).replace(/\s+/g, ' ');
+    const text = raw.toLowerCase().trim().replace(/[.!?,]/g, ' ').replace(/\s+/g, ' ');
     if (!text) return;
     transcript.textContent = 'Heard: ' + raw;
-    if (/\b(help|what can you do|commands)\b/.test(text)) {
-      sayReply('I can check vehicle health, give safety advice, open maps or YouTube, search a destination, open the owner login, and return home. Driver verification cannot be bypassed.'); return;
+
+    if (/\b(help|what can you do|commands|available commands)\b/.test(text)) {
+      sayReply('You can say open owner dashboard, open owner registration, open driver screen, go home, go back, open maps, search maps for a destination, open YouTube, play on YouTube followed by a search, check vehicle health, or ask for safety advice. Driver verification cannot be bypassed.');
+      return;
     }
-    if (/\b(stop listening|turn off listening|go quiet)\b/.test(text)) { stopListening(); sayReply('Voice listening stopped.'); return; }
-    if (/\b(go home|home screen|return home|go home screen)\b/.test(text)) { show('home'); sayReply('Home screen opened.'); return; }
-    if (/\b(owner dashboard|owner login|open owner|open owner dashboard)\b/.test(text)) { show('owner'); sayReply('Owner login opened. Please enter your credentials to continue.'); return; }
-    if (/\b(driver screen|open driver|driver registration|verify driver)\b/.test(text)) { show('driver'); sayReply('Driver verification opened. Follow the on-screen verification steps.'); return; }
-    if (/\b(close app|close maps|close youtube|back to dashboard|close panel)\b/.test(text)) {
+    if (/\b(stop listening|turn off listening|go quiet|stop voice assistant)\b/.test(text)) {
+      stopListening(); sayReply('Voice listening stopped.'); return;
+    }
+    if (/\b(go home|home screen|return home|go to home|home page)\b/.test(text)) {
+      show('home'); sayReply('Home screen opened.'); return;
+    }
+    if (/\b(owner registration|register owner|open registration|open owner registration|owner sign up|owner signup)\b/.test(text)) {
+      show('owner');
+      window.setTimeout(() => { if (typeof tab === 'function') tab('reg'); }, 0);
+      sayReply('Owner registration opened. Complete the form on screen.'); return;
+    }
+    if (/\b(owner dashboard|owner login|open owner|open owner dashboard|owner area)\b/.test(text)) {
+      show('owner'); sayReply('Owner login opened. Enter your credentials to continue.'); return;
+    }
+    if (/\b(driver screen|open driver|driver registration|verify driver|driver verification)\b/.test(text)) {
+      show('driver'); sayReply('Driver verification opened. Follow the on-screen verification steps.'); return;
+    }
+    if (/\b(close app|close maps|close youtube|back to dashboard|close panel|close app panel)\b/.test(text)) {
       if (typeof openedApp !== 'undefined' && openedApp) { closeApp(); sayReply('App panel closed.'); }
       else sayReply('No app panel is open right now.');
       return;
     }
-    if (/\b(repeat advice|repeat that|say that again|read advice again)\b/.test(text)) {
-      if (typeof lastSpoken !== 'undefined' && lastSpoken.length) { speak(lastSpoken); sayStatus('Repeating the latest safety advice.', listening ? 'listening' : 'idle'); }
-      else sayReply('There is no safety advice to repeat yet. Run a health check and ask for advice first.');
+    if (/\b(go back|previous screen|return back|back)\b/.test(text)) {
+      if (typeof openedApp !== 'undefined' && openedApp) { closeApp(); sayReply('Returned to the vehicle dashboard.'); }
+      else if (typeof isUnlocked !== 'undefined' && isUnlocked) { show('car'); sayReply('Returned to the vehicle dashboard.'); }
+      else { show('home'); sayReply('Returned to the home screen.'); }
       return;
     }
+    if (/\b(repeat advice|repeat that|say that again|read advice again|repeat safety advice)\b/.test(text)) {
+      if (typeof lastSpoken !== 'undefined' && lastSpoken.length) {
+        speak(lastSpoken); sayStatus('Repeating the latest safety advice.', listening ? 'listening' : 'idle');
+      } else sayReply('There is no safety advice to repeat yet. Run a health check and ask for advice first.');
+      return;
+    }
+
     const mapSearch = text.match(/(?:search maps for|find on maps|navigate to|directions to|search google maps for)\s+(.+)/);
     if (mapSearch) {
-      if (goCarOrExplain(() => { openApp('maps'); $('mapQ').value = mapSearch[1]; showMap(mapSearch[1], 14); $('mapMsg').textContent = 'Showing search results for ' + mapSearch[1]; })) sayReply('Showing map results for ' + mapSearch[1]);
+      const destination = mapSearch[1].trim();
+      if (destination && goCarOrExplain(() => {
+        openApp('maps'); $('mapQ').value = destination; showMap(destination, 14);
+        $('mapMsg').textContent = 'Showing search results for ' + destination;
+      })) sayReply('Showing map results for ' + destination);
       return;
     }
     if (/\b(open maps|google maps|show maps|maps)\b/.test(text)) {
-      if (goCarOrExplain(() => openApp('maps'))) sayReply('Google Maps opened. You can say search maps for a destination.'); return;
+      if (goCarOrExplain(() => openApp('maps'))) sayReply('Google Maps opened. You can say search maps for a destination.');
+      return;
     }
-    const ytSearch = text.match(/(?:play on youtube|search youtube for|play youtube)\s+(.+)/);
+
+    const ytSearch = text.match(/(?:play on youtube|search youtube for|play youtube|youtube search for)\s+(.+)/);
     if (ytSearch) {
-      if (goCarOrExplain(() => { openApp('yt'); $('ytLink').value = ytSearch[1]; playYt(); })) sayReply('Searching YouTube for ' + ytSearch[1]); return;
+      const query = ytSearch[1].trim();
+      if (query && goCarOrExplain(() => { openApp('yt'); $('ytLink').value = query; playYt(); })) sayReply('Searching YouTube for ' + query);
+      return;
     }
     if (/\b(open youtube|youtube|show youtube)\b/.test(text)) {
-      if (goCarOrExplain(() => openApp('yt'))) sayReply('YouTube opened. Say play on YouTube followed by what you want.'); return;
+      if (goCarOrExplain(() => openApp('yt'))) sayReply('YouTube opened. Say play on YouTube followed by what you want.');
+      return;
     }
     if (/\b(check vehicle|check car|check vehicle health|run health check|scan vehicle|vehicle health)\b/.test(text)) {
-      if (goCarOrExplain(() => $('checkBtn').click())) sayReply('Running the vehicle health demo check. Remember, current readings are simulated.'); return;
+      if (goCarOrExplain(() => $('checkBtn').click())) sayReply('Running the vehicle health demo check. Remember, current readings are simulated.');
+      return;
     }
-    if (/\b(what should i do|give advice|safety advice|tell me the risk|explain risk)\b/.test(text)) {
-      if (goCarOrExplain(() => { if ($('ask').disabled) { sayReply('Run a vehicle health check first.'); } else $('ask').click(); })) sayReply('Getting safety advice.'); return;
+    if (/\b(what should i do|give advice|safety advice|tell me the risk|explain risk|give me advice)\b/.test(text)) {
+      if (goCarOrExplain(() => { if ($('ask').disabled) sayReply('Run a vehicle health check first.'); else $('ask').click(); })) sayReply('Getting safety advice.');
+      return;
     }
-    if (/\b(show dashboard|open car dashboard|vehicle dashboard)\b/.test(text)) {
-      if (carAvailable()) { show('car'); sayReply('Vehicle dashboard opened.'); } else sayReply('Please verify the driver first. I cannot bypass vehicle access security.'); return;
+    if (/\b(show dashboard|open car dashboard|vehicle dashboard|open vehicle dashboard)\b/.test(text)) {
+      if (carAvailable()) { show('car'); sayReply('Vehicle dashboard opened.'); }
+      else sayReply('Please verify the driver first. I cannot bypass vehicle access security.');
+      return;
     }
     sayReply('I did not understand that command. Say help to hear available commands.');
   };
@@ -1053,3 +1089,4 @@ $("mapMe").onclick = () => {
 </script>
 </body>
 </html>
+
