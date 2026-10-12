@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Saarthi AI</title>
-<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js">
-
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
 // ---- Persistent floating voice assistant ----
 (() => {
   const dock = document.getElementById('voiceDock');
@@ -163,7 +164,7 @@
   }
   startBtn.addEventListener('click', () => { try { localStorage.setItem('saarthiVoiceOptIn', 'yes'); } catch (_) {} });
 })();
-
+}); // DOMContentLoaded
 </script>
 <style>
 :root{--bg:#0c0a08;--card:#020202df;--ink:#16202E;--mute:#5C6877;--line:#CBD2DB;--ok:#1F8A70;--warn:#D99A00;--crit:#C8333D;--navy:#1D3557}
