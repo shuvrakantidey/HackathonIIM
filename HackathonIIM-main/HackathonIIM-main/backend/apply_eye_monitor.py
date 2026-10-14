@@ -1,22 +1,433 @@
-#!/usr/bin/env python3
-"""Adds a small EYE icon in the top-left corner. After the driver unlocks the car, the camera runs in the
-background, tracks whether the driver's eyes are open or closed, and beeps if the eyes stay closed for 3 seconds.
-Click the eye to pause or resume it. Video never leaves the browser (nothing is recorded or uploaded).
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saarthi AI</title>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+// ---- Persistent floating voice assistant ----
+(() => {
+  const dock = document.getElementById('voiceDock');
+  const status = document.getElementById('vdStatus');
+  const transcript = document.getElementById('vdTranscript');
+  const startBtn = document.getElementById('vdStart');
+  const stopBtn = document.getElementById('vdStop');
+  const minBtn = document.getElementById('vdMin');
+  const drag = document.getElementById('vdDrag');
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null, listening = false, shouldListen = false, restarting = false;
+  let suppressUntil = 0, dragging = false, dragDX = 0, dragDY = 0;
+  const sayStatus = (message, state) => { status.textContent = message; dock.dataset.state = state || (listening ? 'listening' : 'idle'); };
+  const sayReply = (message) => {
+    sayStatus(message, listening ? 'listening' : 'idle');
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(message);
+      const voices = speechSynthesis.getVoices();
+      const voice = voices.find(v => v.lang === 'en-IN') || voices.find(v => v.lang.startsWith('en'));
+      if (voice) utter.voice = voice;
+      utter.rate = 1;
+      suppressUntil = Date.now() + Math.max(1800, message.length * 65);
+      utter.onend = () => { suppressUntil = Date.now() + 250; };
+      speechSynthesis.speak(utter);
+    }
+  };
+  const carAvailable = () => !!(typeof isUnlocked !== 'undefined' && isUnlocked);
+  const goCarOrExplain = (action) => {
+    if (!carAvailable()) { sayReply('Please verify the driver first. I cannot bypass vehicle access security with a voice command.'); return false; }
+    show('car'); action(); return true;
+  };
+  const runCommand = (raw) => {
+    const text = raw.toLowerCase().trim().replace(/[.!?,]/g, ' ').replace(/\s+/g, ' ');
+    if (!text) return;
+    transcript.textContent = 'Heard: ' + raw;
 
-Run from the repo root:   python3 backend/apply_eye_monitor.py
-Edits backend/public/index.html in place; stops without changing anything if the expected code is not found."""
-import sys
+    if (/\b(help|what can you do|commands|available commands)\b/.test(text)) {
+      sayReply('You can say open owner dashboard, open owner registration, open driver screen, go home, go back, open maps, search maps for a destination, open YouTube, play on YouTube followed by a search, check vehicle health, or ask for safety advice. Driver verification cannot be bypassed.');
+      return;
+    }
+    if (/\b(stop listening|turn off listening|go quiet|stop voice assistant)\b/.test(text)) {
+      stopListening(); sayReply('Voice listening stopped.'); return;
+    }
+    if (/\b(go home|home screen|return home|go to home|home page)\b/.test(text)) {
+      show('home'); sayReply('Home screen opened.'); return;
+    }
+    if (/\b(owner registration|register owner|open registration|open owner registration|owner sign up|owner signup)\b/.test(text)) {
+      show('owner');
+      window.setTimeout(() => { if (typeof tab === 'function') tab('reg'); }, 0);
+      sayReply('Owner registration opened. Complete the form on screen.'); return;
+    }
+    if (/\b(owner dashboard|owner login|open owner|open owner dashboard|owner area)\b/.test(text)) {
+      show('owner'); sayReply('Owner login opened. Enter your credentials to continue.'); return;
+    }
+    if (/\b(driver screen|open driver|driver registration|verify driver|driver verification)\b/.test(text)) {
+      show('driver'); sayReply('Driver verification opened. Follow the on-screen verification steps.'); return;
+    }
+    if (/\b(close app|close maps|close youtube|close panel|close app panel)\b/.test(text)) {
+      if (typeof openedApp !== 'undefined' && openedApp) { closeApp(); sayReply('App panel closed.'); }
+      else sayReply('No app panel is open right now.');
+      return;
+    }
+    if (/\b(go back|previous screen|return back|back)\b/.test(text)) {
+      if (typeof openedApp !== 'undefined' && openedApp) { closeApp(); sayReply('Returned to the vehicle dashboard.'); }
+      else if (typeof isUnlocked !== 'undefined' && isUnlocked) { show('car'); sayReply('Returned to the vehicle dashboard.'); }
+      else { show('home'); sayReply('Returned to the home screen.'); }
+      return;
+    }
+    if (/\b(repeat advice|repeat that|say that again|read advice again|repeat safety advice)\b/.test(text)) {
+      if (typeof lastSpoken !== 'undefined' && lastSpoken.length) {
+        speak(lastSpoken); sayStatus('Repeating the latest safety advice.', listening ? 'listening' : 'idle');
+      } else sayReply('There is no safety advice to repeat yet. Run a health check and ask for advice first.');
+      return;
+    }
 
-PATH = sys.argv[1] if len(sys.argv) > 1 else "backend/public/index.html"
-s = open(PATH, encoding="utf-8").read()
-if 'id="eyeBtn"' in s:
-    sys.exit("Already applied. Nothing to do.")
+    const mapSearch = text.match(/(?:search maps for|find on maps|navigate to|directions to|search google maps for)\s+(.+)/);
+    if (mapSearch) {
+      const destination = mapSearch[1].trim();
+      if (destination && goCarOrExplain(() => {
+        openApp('maps'); $('mapQ').value = destination; showMap(destination, 14);
+        $('mapMsg').textContent = 'Showing search results for ' + destination;
+      })) sayReply('Showing map results for ' + destination);
+      return;
+    }
+    if (/\b(open maps|google maps|show maps|maps)\b/.test(text)) {
+      if (goCarOrExplain(() => openApp('maps'))) sayReply('Google Maps opened. You can say search maps for a destination.');
+      return;
+    }
 
-def stop(what):
-    sys.exit(f"STOPPED: could not find '{what}'. Your file was NOT changed.")
+    const ytSearch = text.match(/(?:play on youtube|search youtube for|play youtube|youtube search for)\s+(.+)/);
+    if (ytSearch) {
+      const query = ytSearch[1].trim();
+      if (query && goCarOrExplain(() => { openApp('yt'); $('ytLink').value = query; playYt(); })) sayReply('Searching YouTube for ' + query);
+      return;
+    }
+    if (/\b(open youtube|youtube|show youtube)\b/.test(text)) {
+      if (goCarOrExplain(() => openApp('yt'))) sayReply('YouTube opened. Say play on YouTube followed by what you want.');
+      return;
+    }
+    if (/\b(check vehicle|check car|check vehicle health|run health check|scan vehicle|vehicle health)\b/.test(text)) {
+      if (goCarOrExplain(() => $('checkBtn').click())) sayReply('Running the vehicle health demo check. Remember, current readings are simulated.');
+      return;
+    }
+    if (/\b(what should i do|give advice|safety advice|tell me the risk|explain risk|give me advice)\b/.test(text)) {
+      if (goCarOrExplain(() => { if ($('ask').disabled) sayReply('Run a vehicle health check first.'); else $('ask').click(); })) sayReply('Getting safety advice.');
+      return;
+    }
+    if (/\b(dashboard|open dashboard|show dashboard|car dashboard|open car dashboard|vehicle dashboard|open vehicle dashboard|go to dashboard|back to dashboard)\b/.test(text)) {
+      if (carAvailable()) { show('car'); sayReply('Vehicle dashboard opened.'); }
+      else sayReply('Please verify the driver first. I cannot bypass vehicle access security.');
+      return;
+    }
+    sayReply('I did not understand that command. Say help to hear available commands.');
+  };
+  function startListening() {
+    if (!SpeechRecognition) { sayStatus('Speech recognition is not supported here. Use a recent Chrome or Edge browser and allow microphone access.', 'error'); return; }
+    if (listening || restarting) return;
+    try {
+      if (!recognition) {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'en-IN'; recognition.continuous = true; recognition.interimResults = true; recognition.maxAlternatives = 1;
+        recognition.onstart = () => { listening = true; restarting = false; startBtn.textContent = '🎙 Listening…'; sayStatus('Listening continuously. Say a command naturally.', 'listening'); };
+        recognition.onresult = (event) => {
+          let finalText = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const item = event.results[i];
+            if (item.isFinal) finalText += item[0].transcript + ' ';
+            else transcript.textContent = 'Hearing: ' + item[0].transcript;
+          }
+          if (finalText.trim() && Date.now() > suppressUntil) runCommand(finalText.trim());
+        };
+        recognition.onerror = (event) => {
+          if (event.error === 'not-allowed' || event.error === 'service-not-allowed') { shouldListen = false; listening = false; sayStatus('Microphone permission was denied. Allow microphone access in browser settings, then press Start.', 'error'); }
+          else if (event.error === 'audio-capture') sayStatus('No microphone was found. Connect a microphone and try again.', 'error');
+          else if (event.error !== 'no-speech' && event.error !== 'aborted') sayStatus('Voice recognition issue: ' + event.error + '. Trying to recover…', 'error');
+        };
+        recognition.onend = () => {
+          listening = false; startBtn.textContent = '🎙 Start listening';
+          if (shouldListen && !restarting) {
+            restarting = true;
+            setTimeout(() => { restarting = false; if (shouldListen) { try { recognition.start(); } catch (_) {} } }, 450);
+          } else if (!shouldListen) sayStatus('Voice listening is off. Press Start to resume.', 'idle');
+        };
+      }
+      shouldListen = true; recognition.start();
+    } catch (e) { restarting = false; sayStatus('Could not start the microphone. Check browser permission and try again.', 'error'); }
+  }
+  function stopListening() {
+    shouldListen = false; restarting = false;
+    if (recognition) { try { recognition.stop(); } catch (_) {} }
+    listening = false; startBtn.textContent = '🎙 Start listening';
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    sayStatus('Voice listening is off. Press Start to resume.', 'idle');
+  }
+  startBtn.addEventListener('click', startListening);
+  stopBtn.addEventListener('click', stopListening);
+  minBtn.addEventListener('click', () => {
+    const collapsed = dock.classList.toggle('vd-collapsed');
+    minBtn.textContent = collapsed ? '‹' : '›';
+    minBtn.setAttribute('aria-label', collapsed ? 'Expand voice assistant' : 'Slide assistant to screen edge');
+    if (collapsed) dock.style.left = 'auto';
+  });
+  // Drag by the title bar; clamp the widget within the visible viewport.
+  drag.addEventListener('pointerdown', (e) => {
+    if (e.target === minBtn) return;
+    dragging = true; const r = dock.getBoundingClientRect(); dragDX = e.clientX - r.left; dragDY = e.clientY - r.top;
+    try { drag.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  drag.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const x = Math.max(0, Math.min(window.innerWidth - dock.offsetWidth, e.clientX - dragDX));
+    const y = Math.max(0, Math.min(window.innerHeight - 46, e.clientY - dragDY));
+    dock.style.left = x + 'px'; dock.style.top = y + 'px'; dock.style.right = 'auto'; dock.style.bottom = 'auto';
+  });
+  const releaseDrag = () => { dragging = false; };
+  drag.addEventListener('pointerup', releaseDrag); drag.addEventListener('pointercancel', releaseDrag);
+  window.addEventListener('resize', () => {
+    const r = dock.getBoundingClientRect();
+    if (r.left + dock.offsetWidth > window.innerWidth) { dock.style.left = Math.max(0, window.innerWidth - dock.offsetWidth) + 'px'; dock.style.right = 'auto'; }
+    if (r.top + 46 > window.innerHeight) dock.style.top = Math.max(0, window.innerHeight - 46) + 'px';
+  });
+  // Browsers require a user gesture to grant/start the microphone. Auto-resume is attempted only after the user opted in before.
+  let previouslyEnabled = false;
+  try { previouslyEnabled = localStorage.getItem('saarthiVoiceOptIn') === 'yes'; } catch (_) {}
+  if (previouslyEnabled) {
+    sayStatus('Reconnecting to the microphone…', 'idle');
+    // Try to resume after reload when the browser has already granted microphone permission.
+    // Some browsers still require a fresh user gesture; the Start button remains available.
+    setTimeout(() => { if (!listening && !shouldListen) startListening(); }, 700);
+  }
+  startBtn.addEventListener('click', () => { try { localStorage.setItem('saarthiVoiceOptIn', 'yes'); } catch (_) {} });
+})();
+}); // DOMContentLoaded
+</script>
+<style>
+:root{--bg:#0c0a08;--card:#020202df;--ink:#16202E;--mute:#5C6877;--line:#CBD2DB;--ok:#1F8A70;--warn:#D99A00;--crit:#C8333D;--navy:#1D3557}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:1060px;margin:0 auto;padding:24px 16px 48px}
+h1{margin:0;font-size:28px;color:var(--navy)}
+h2{margin:0 0 12px;font-size:16px;color:var(--mute);font-weight:600}
+header p{margin:0 0 16px;color:var(--mute)}
+nav{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+nav button{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:6px;font:inherit;cursor:pointer}
+nav button[aria-pressed=true]{background:var(--navy);color:#fff;border-color:var(--navy)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px}
+.wide{grid-column:1/-1}
+.gauge{text-align:center}
+.gauge svg{width:100%;max-width:300px}
+.gauge .lvl{font-size:22px;font-weight:700;margin-top:-6px}
+.safe{color:var(--ok)}.caution,.warning{color:var(--warn)}.high,.critical{color:var(--crit)}
+.row{display:grid;grid-template-columns:120px 1fr 70px;gap:10px;align-items:center;margin:8px 0}
+.bar{height:8px;background:#E4E8ED;border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%}
+.ok-bg{background:var(--ok)}.warning-bg{background:var(--warn)}.critical-bg{background:var(--crit)}
+.row b{text-align:right}
+.alert{border-left:5px solid;padding:6px 12px;margin:8px 0;background:#F7F8FA}
+.alert.critical{border-color:var(--crit)}.alert.warning{border-color:var(--warn)}.alert.info{border-color:var(--navy)}
+.alert strong{display:block}.alert span{color:var(--mute);font-size:14px}
+.empty{color:var(--ok);font-weight:600}
+.trend{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.trend small{color:var(--mute)}
+.trend svg{width:100%;height:50px}
+#ask{background:var(--crit);color:#fff;border:0;border-radius:8px;padding:14px 26px;font:700 18px inherit;cursor:pointer}
+#ask:disabled{opacity:.6;cursor:wait}
+#steps{font-size:20px;margin:16px 0 0;padding-left:24px}
+#steps li{margin:6px 0}
+#src{color:var(--mute);font-size:13px;margin-top:8px}
+button:focus-visible{outline:3px solid var(--navy);outline-offset:2px}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.row{grid-template-columns:100px 1fr 60px}}
+#lock{position:fixed;inset:0;z-index:10;background:var(--navy);display:flex;align-items:center;justify-content:center;padding:16px}
+#lock[hidden]{display:none}
+.lockbox{background:var(--card);border-radius:12px;padding:24px;width:100%;max-width:420px;text-align:center}
+.lockbox h2{color:var(--navy);font-size:20px}
+.lockbox video{width:100%;border-radius:8px;background:#000;transform:scaleX(-1)}
+.lockbox input{width:100%;padding:10px;margin:10px 0 0;border:1px solid var(--line);border-radius:6px;font:inherit}
+.lockbox button{margin:10px 6px 0;padding:10px 18px;border-radius:6px;border:0;font:600 16px inherit;cursor:pointer;background:var(--navy);color:#fff}
+.lockbox button.ghost{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+.lockbox button:disabled{opacity:.5;cursor:not-allowed}
+#lockmsg{min-height:48px;margin:12px 0 0}
+#lockmsg.bad{color:var(--crit);font-weight:600}
+#who{color:var(--mute)}
+#lockBtn{margin-left:8px;border:1px solid var(--line);background:var(--card);border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}
+#home,#driver{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;text-align:center}
+#home[hidden],#driver[hidden],main[hidden]{display:none}
+#home p{color:var(--mute);margin:4px 0 24px}
+.choices{display:flex;flex-wrap:wrap;gap:16px;justify-content:center}
+.choice{width:260px;padding:28px 20px;background:var(--card);border:1px solid var(--line);border-radius:12px;cursor:pointer;font:inherit;color:var(--ink)}
+.choice strong{display:block;font-size:26px;color:var(--navy)}
+.choice span{color:var(--mute)}
+.choice[hidden]{display:none}
+.choice:hover{border-color:var(--navy)}
+#homeBtn{margin-left:8px;border:1px solid var(--line);background:var(--card);border-radius:6px;padding:4px 12px;font:inherit;cursor:pointer}
+.voice{margin-left:16px;color:var(--mute);cursor:pointer}
+#replay{margin-left:12px;border:1px solid var(--navy);background:#fff;color:var(--navy);border-radius:8px;padding:10px 16px;font:600 15px inherit;cursor:pointer}
+#padlock{color:var(--crit);transition:color .4s;margin-bottom:6px}
+#padlock #shackle{transition:transform .4s;transform-box:fill-box}
+#padlock.open{color:var(--ok)}
+#padlock.open #shackle{transform:translateY(-9px)}
+#padlock.denied{animation:shake .35s 3}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+.plate{display:inline-block;background:#fff;border:2px solid var(--ink);border-radius:6px;padding:1px 10px;margin:0 6px;font:700 15px/1.4 monospace;letter-spacing:2px;color:var(--ink)}
+.plate[hidden]{display:none}
+#car{max-width:none;margin:0;padding:0;display:flex;min-height:100vh;background:#fff;color:#31333F;font-family:"Source Sans Pro","Source Sans 3","Segoe UI",system-ui,sans-serif}
+#car[hidden]{display:none}
+.sl-side{width:300px;flex-shrink:0;background:#F0F2F6;padding:56px 20px 24px}
+.sl-label{display:block;font-size:14px;margin-bottom:6px}
+#scSel{width:100%;padding:9px 10px;border:1px solid transparent;border-radius:8px;background:#fff;font-family:inherit;font-size:16px;color:#31333F}
+.sl-meta{margin:24px 0 12px;font-size:14px;color:#555}
+#car #homeBtn{margin:0;font-family:inherit;font-size:15px;background:#fff;border:1px solid rgba(49,51,63,.2);border-radius:8px;padding:6px 16px}
+.sl-main{flex:1;min-width:0;max-width:1100px;padding:56px 48px 48px}
+.sl-title{font-size:44px;font-weight:700;line-height:1.2;margin:0 0 4px}
+.sl-caption{font-size:14px;color:rgba(49,51,63,.6);margin-bottom:28px}
+.sl-h{font-size:26px;font-weight:600;margin:0 0 12px;color:#31333F}
+.sl-cols{display:grid;gap:32px}
+.sl-cols.a{grid-template-columns:1fr 2fr}
+.sl-cols.b{grid-template-columns:1fr 1fr}
+.sl-hr{border:0;border-top:1px solid rgba(49,51,63,.2);margin:28px 0}
+.sl-lvl{text-align:center;font-size:16px;margin-bottom:-6px}
+#risk svg{width:100%;max-width:320px;display:block;margin:0 auto}
+.sl-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:24px 16px}
+.sl-m small{display:block;font-size:14px}
+.sl-m b{display:block;font-size:34px;font-weight:400;line-height:1.3}
+.sl-m b.sm{font-size:18px;padding-top:10px}
+.sl-box{padding:16px;border-radius:8px;margin-bottom:12px;font-size:16px;line-height:1.5}
+.sl-err{background:rgba(255,43,43,.09);color:#7d353b}
+.sl-warn{background:rgba(255,227,18,.1);color:#926c05}
+.sl-info{background:rgba(28,131,225,.1);color:#004280}
+.sl-ok{background:rgba(33,195,84,.1);color:#177233}
+.sl-btnrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.sl-btnrow .voice{margin:0}
+#car #ask{background:#FF4B4B;color:#fff;border:1px solid #FF4B4B;border-radius:8px;padding:8px 16px;font-family:inherit;font-size:16px;font-weight:400;cursor:pointer}
+#car #replay{margin:0;font-family:inherit;font-size:15px;padding:7px 14px;border-radius:8px}
+#car #src{color:#31333F;font-size:16px;margin-top:16px}
+.sl-sub{color:#808495;font-size:13px}
+#car #steps{font-size:16px;margin:8px 0 0;padding:0}
+#car #steps p{margin:6px 0}
+.sl-trend{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:12px}
+.sl-trend small{display:block;font-size:14px}
+.sl-trend svg{width:100%;height:60px}
+@media(max-width:800px){#car,#owner{flex-direction:column}.sl-side{width:auto;padding:24px 16px}.sl-main{padding:24px 16px}.sl-cols.a,.sl-cols.b{grid-template-columns:1fr}.sl-title{font-size:30px}.sl-metrics{grid-template-columns:1fr 1fr}}
+#owner{max-width:none;margin:0;padding:0;display:flex;min-height:100vh;background:#fff;color:#31333F;font-family:"Source Sans Pro","Source Sans 3","Segoe UI",system-ui,sans-serif}
+#owner[hidden]{display:none}
+.sl-side button,.og button{font-family:inherit;font-size:15px;background:#fff;border:1px solid rgba(49,51,63,.2);border-radius:8px;padding:6px 16px;cursor:pointer;color:#31333F}
+#car #ownerBtn{display:block;margin:10px 0 0}
+.og{margin:8px 0 20px;max-width:360px}
+.og input{width:100%;padding:9px 10px;border:1px solid rgba(49,51,63,.3);border-radius:8px;font-family:inherit;font-size:16px;margin:8px 0}
+.og button.pri{background:#FF4B4B;border-color:#FF4B4B;color:#fff}
+#ownerMsg{color:#C8333D;margin:8px 0 0;min-height:22px}
+.sl-tablewrap{overflow-x:auto}
+.sl-table{width:100%;border-collapse:collapse;font-size:15px}
+.sl-table th{background:#F0F2F6;text-align:left;padding:8px 10px;font-weight:600;white-space:nowrap}
+.sl-table td{padding:8px 10px;border-bottom:1px solid rgba(49,51,63,.12)}
+.ev{font-weight:600;white-space:nowrap}.ev.unlock{color:#1F8A70}.ev.lock{color:#1D3557}.ev.denied{color:#C8333D}
+.owner-link{margin-top:28px}
+.owner-link button{background:none;border:0;color:var(--mute);text-decoration:underline;cursor:pointer;font:inherit}
+.og{max-width:420px}
+.og p{margin:6px 0}
+.og-tabs{display:flex;gap:8px;margin-bottom:12px}
+.og-tabs button.on{background:#31333F;color:#fff;border-color:#31333F}
+.og button{margin-top:6px;margin-right:6px}
+.pwbox{font:700 26px/1.4 monospace;letter-spacing:2px;background:#F0F2F6;border-radius:8px;padding:14px;margin:8px 0;word-break:break-all;user-select:all}
+.og [hidden]{display:none}
+#car #checkBtn{display:block;width:100%;background:#FF4B4B;color:#fff;border:1px solid #FF4B4B;border-radius:8px;padding:10px 12px;font-family:inherit;font-size:16px;cursor:pointer}
+#car #checkBtn:disabled{opacity:.7;cursor:wait}
+#lastCheck{margin:8px 0 0}
+.sl-apps{margin-top:24px}
+.app-ic{display:flex;align-items:center;gap:10px;width:100%;margin:8px 0 0;padding:8px 12px;text-align:left}
+.app-ic svg{width:28px;height:28px;flex-shrink:0}
+.sl-side .app-ic.on{border-color:#FF4B4B;background:#fff5f5}
+.sl-main.app > :not(#appPanel){display:none}
+#appPanel[hidden],#appPanel [hidden]{display:none}
+.ap-bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.ap-bar .sl-h{margin:0}
+.ap-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.ap-row input{flex:1;min-width:220px;padding:9px 10px;border:1px solid rgba(49,51,63,.3);border-radius:8px;font-family:inherit;font-size:16px}
+.ap-link{color:#1c83e1;font-size:15px;white-space:nowrap}
+#appPanel button{font-family:inherit;font-size:15px;background:#fff;border:1px solid rgba(49,51,63,.2);border-radius:8px;padding:8px 16px;cursor:pointer;color:#31333F}
+#appPanel button.pri{background:#FF4B4B;border-color:#FF4B4B;color:#fff}
+.ap-frame{display:block;width:100%;height:min(62vh,560px);border:0;border-radius:10px;background:#000}
 
-# ---------- CSS ----------
-css = '''#eyeBox{position:fixed;top:10px;left:10px;z-index:70;display:flex;align-items:center;gap:8px;pointer-events:none}
+/* Saarthi futuristic dark dashboard theme */
+:root{--bg:#030b19;--card:#07162b;--ink:#e7f2ff;--mute:#9db2d0;--line:#19385b;--ok:#00e0ad;--warn:#ffbd4a;--crit:#ff5277;--navy:#071f46}
+body{background:#020817;color:#e7f2ff}
+#car{background:radial-gradient(ellipse at 60% 20%,#0c2444 0%,#061329 42%,#020817 100%);color:#e7f2ff}
+.sl-side{background:linear-gradient(180deg,#06142a,#030b19);border-right:1px solid #16365c;padding-top:28px;box-shadow:8px 0 35px #0003}
+.sl-side button,.sl-side #homeBtn,.sl-side #ownerBtn{background:#0a1d38;color:#dceaff;border:1px solid #1d3c62;border-radius:10px}
+.sl-side button:hover{border-color:#00cfff;background:#0c2b50}
+.sl-side #checkBtn,#car #ask{background:linear-gradient(100deg,#0a9cbb,#1767d1);border:1px solid #22d8ff;color:white;box-shadow:0 0 20px #00bfff22}
+.sl-main{max-width:none;padding:32px clamp(18px,3vw,48px) 36px}
+.sl-title{font-size:clamp(28px,3vw,42px);color:#f1f7ff;letter-spacing:-.8px}
+.sl-caption,.sl-sub{color:#89a5c8}
+.sl-h{color:#dcecff}
+.sl-hr{border-top-color:#183657}
+.sl-lvl{color:#8da9cc}
+.sl-m small{color:#9bb4d3}.sl-m b{color:#e8f6ff}
+.sl-box{background:#0b1b32;border:1px solid #193958;border-left-width:4px;border-radius:10px;color:#d7e7fa}
+.sl-box span,.sl-box .sl-sub{color:#9db2d0}
+.sl-info{border-color:#2086ce;background:#082341;color:#b9e5ff}.sl-warn{border-color:#f0ad35;background:#2a2115;color:#ffdda0}.sl-err{border-color:#ff5277;background:#2a1223;color:#ffc5d4}.sl-ok{border-color:#00d6a3;background:#082a2b;color:#a9ffe6}
+#car #src{color:#9db2d0}#car #replay{background:#0c2442;color:#dcecff;border-color:#25517a}
+#risk svg text:last-child{fill:#e8f6ff!important}
+#lastCheck{color:#83a2c7}
+.plate{background:#0a1d38;border-color:#2c5279;color:#eaf6ff}
+.vehicle-showcase{position:relative;margin:8px 0 26px;border:1px solid #183b60;border-radius:20px;overflow:hidden;background:radial-gradient(ellipse at 50% 58%,#10335a 0%,#081a32 45%,#061126 100%);box-shadow:inset 0 0 45px #007fc51a,0 18px 48px #0003}
+.vehicle-topline,.vehicle-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 18px;color:#88a9ce;font-size:11px;letter-spacing:1.3px;text-transform:uppercase}
+.vehicle-topline{border-bottom:1px solid #183453}.vehicle-foot{border-top:1px solid #183453;letter-spacing:.2px;text-transform:none;font-size:12px}
+.pulse-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#00e0ad;box-shadow:0 0 12px #00e0ad;margin-right:7px}
+.demo-chip{border:1px solid #1a6380;background:#082b43;color:#54e6ff;padding:5px 9px;border-radius:20px;font-size:10px}
+.vehicle-stage{height:340px;position:relative;display:flex;align-items:center;justify-content:center;perspective:1100px;overflow:hidden;background-image:linear-gradient(#1b456522 1px,transparent 1px),linear-gradient(90deg,#1b456522 1px,transparent 1px);background-size:38px 38px;}
+.vehicle-model{position:absolute;inset:0;z-index:2;width:100%;height:100%;touch-action:pan-y;cursor:grab;outline:none}
+.vehicle-model:active{cursor:grabbing}.vehicle-model canvas{display:block;width:100%;height:100%;outline:none}
+.vehicle-controls{position:absolute;z-index:5;right:16px;bottom:14px;display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.vehicle-controls button{border:1px solid #22618b;background:#071a31eF;color:#c9f4ff;border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer}
+.vehicle-controls button:hover,.vehicle-controls button[aria-pressed="true"]{background:#0c4264;border-color:#27cfff}
+.vehicle-hint{position:absolute;z-index:4;left:50%;bottom:17px;transform:translateX(-50%);font-size:11px;color:#83a9cc;white-space:nowrap;pointer-events:none}
+.component-health{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0 24px}
+.health-card{background:linear-gradient(145deg,#0b203a,#071326);border:1px solid #1a3c5d;border-radius:12px;padding:14px;min-width:0}
+.health-card .hc-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8aa8ca}
+.health-card .hc-state{font-size:16px;font-weight:700;color:#c7fbe9;margin-top:7px;overflow-wrap:anywhere}
+.health-card .hc-detail{font-size:12px;color:#9db2d0;margin-top:4px}
+.health-card .hc-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#00e0ad;margin-right:6px;box-shadow:0 0 10px currentColor}
+@media(max-width:900px){.vehicle-stage{height:330px}.component-health{grid-template-columns:repeat(2,minmax(0,1fr))}.part-tag{padding:7px 8px;min-width:0}.part-tag>span{width:26px;height:26px}.part-tag b{font-size:11px}.part-tag small{font-size:9px}.tag-engine{left:2%;top:12%}.tag-tyres{left:2%;bottom:7%}.tag-battery{right:2%;top:10%}.tag-brakes{right:2%;bottom:7%}}
+@media(max-width:560px){.vehicle-stage{height:280px}.part-tag{gap:5px;padding:5px 6px}.part-tag>span{display:none}.part-tag b{font-size:10px}.part-tag small{font-size:8px}.vehicle-foot{font-size:10px;flex-wrap:wrap}.vehicle-topline{font-size:9px;padding:10px}.vehicle-hint{display:none}.vehicle-controls{right:8px;bottom:8px}.vehicle-controls button{padding:6px 7px}.component-health{gap:8px}.health-card{padding:10px}.health-card .hc-state{font-size:14px}}
+.orbit{position:absolute;left:50%;top:58%;border:1px solid #078dcc55;border-radius:50%;transform:translate(-50%,-50%) rotateX(68deg);pointer-events:none}
+.orbit-one{width:70%;height:58%;box-shadow:0 0 28px #00bfff12}.orbit-two{width:52%;height:40%;border-color:#1a8cc533}
+.part-tag{position:absolute;z-index:3;display:flex;align-items:center;gap:10px;padding:10px 13px;border:1px solid #1b6891;border-radius:12px;background:#06172eeF;box-shadow:0 8px 25px #0003;min-width:125px}
+.part-tag>span{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;background:#0b3153;color:#4ce8ff;font-size:20px}.part-tag b{display:block;font-size:13px;color:#e6f5ff}.part-tag small{display:block;color:#00e0ad;font-size:11px;margin-top:2px;white-space:nowrap}
+.tag-engine{left:4%;top:25%}.tag-tyres{left:7%;bottom:13%}.tag-battery{right:5%;top:15%}.tag-brakes{right:8%;bottom:13%}
+@keyframes carFloat{0%,100%{transform:translateY(2px)}50%{transform:translateY(-7px)}}
+@keyframes carTurn{0%{transform:rotateY(-7deg) rotateZ(-1deg)}50%{transform:rotateY(5deg) rotateZ(0deg)}100%{transform:rotateY(-4deg) rotateZ(1deg)}}
+@keyframes wheelSpin{to{transform:rotate(360deg)}}
+@media(max-width:900px){.vehicle-stage{height:300px}.part-tag{padding:7px 8px;min-width:0}.part-tag>span{width:26px;height:26px}.part-tag b{font-size:11px}.part-tag small{font-size:9px}.tag-engine{left:2%;top:12%}.tag-tyres{left:2%;bottom:7%}.tag-battery{right:2%;top:10%}.tag-brakes{right:2%;bottom:7%}}
+@media(max-width:560px){.vehicle-stage{height:250px}.part-tag{gap:5px;padding:5px 6px}.part-tag>span{display:none}.part-tag b{font-size:10px}.part-tag small{font-size:8px}.vehicle-foot{font-size:10px;flex-wrap:wrap}.vehicle-topline{font-size:9px;padding:10px}}
+
+/* Floating hands-free Saarthi assistant */
+#voiceDock{position:fixed;z-index:9999;right:14px;top:34%;width:286px;max-width:calc(100vw - 28px);background:#101827;color:#f8fafc;border:1px solid #334155;border-radius:14px;box-shadow:0 16px 48px #0006;font:14px/1.4 "Segoe UI",system-ui,sans-serif;overflow:hidden;touch-action:none}
+#voiceDock[hidden]{display:none}
+#voiceDock .vd-head{display:flex;align-items:center;gap:8px;padding:10px 11px;background:#182438;cursor:grab;user-select:none}
+#voiceDock .vd-dot{width:9px;height:9px;border-radius:50%;background:#64748b;flex:none}
+#voiceDock[data-state="listening"] .vd-dot{background:#22c55e;box-shadow:0 0 0 4px #22c55e22}
+#voiceDock[data-state="error"] .vd-dot{background:#ef4444}
+#voiceDock .vd-title{font-weight:700;flex:1}
+#voiceDock button{cursor:pointer;border:1px solid #475569;border-radius:8px;background:#263449;color:#fff;padding:6px 9px;font:inherit}
+#voiceDock .vd-min{padding:2px 8px;font-size:20px;line-height:1.2}
+#voiceDock .vd-body{padding:11px;touch-action:pan-y}
+#voiceDock .vd-status{color:#cbd5e1;min-height:38px;margin:0 0 9px}
+#voiceDock .vd-actions{display:flex;gap:7px;align-items:center}
+#voiceDock #vdStart{background:#16a34a;border-color:#16a34a;font-weight:700;flex:1}
+#voiceDock #vdStop{background:#334155}
+#voiceDock .vd-hint{font-size:11px;color:#94a3b8;margin:9px 0 0}
+#voiceDock .vd-transcript{font-size:12px;color:#e2e8f0;min-height:18px;margin-top:8px;overflow-wrap:anywhere}
+#voiceDock.vd-collapsed{right:0!important;width:42px;border-radius:12px 0 0 12px;border-right:0}
+#voiceDock.vd-collapsed .vd-head{padding:9px 6px;display:flex;flex-direction:column;gap:9px;cursor:grab}
+#voiceDock.vd-collapsed .vd-title,#voiceDock.vd-collapsed .vd-body{display:none}
+#voiceDock.vd-collapsed .vd-min{font-size:18px;padding:0 5px}
+#voiceDock.vd-collapsed .vd-dot{width:10px;height:10px}
+@media(max-width:600px){#voiceDock{top:auto;bottom:12px;right:10px;width:270px}}
+
+#eyeBox{position:fixed;top:10px;left:10px;z-index:70;display:flex;align-items:center;gap:8px;pointer-events:none}
 #eyeBtn{pointer-events:auto;width:40px;height:40px;border-radius:50%;border:2px solid #7d8590;background:rgba(12,16,24,.88);padding:6px;cursor:pointer;color:#9aa4b2;transition:color .2s,border-color .2s,background .2s}
 #eyeBtn svg{width:100%;height:100%;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #eyeBtn .e-open,#eyeBtn .e-shut,#eyeBtn .e-off{display:none}
@@ -32,14 +443,9 @@ css = '''#eyeBox{position:fixed;top:10px;left:10px;z-index:70;display:flex;align
 #eyeLbl{background:#C8333D;color:#fff;padding:4px 10px;border-radius:14px;font:600 14px/1.2 "Segoe UI",system-ui,sans-serif;white-space:nowrap}
 #eyeLbl[hidden]{display:none}
 #eyeCam{position:fixed;left:0;top:0;width:8px;height:8px;opacity:.02;pointer-events:none;z-index:-1}
-'''
-if '</style>' not in s: stop("style block")
-i = s.rindex('</style>')
-s = s[:i] + css + s[i:]
-
-# ---------- HTML ----------
-if s.count('<body>') != 1: stop("<body>")
-s = s.replace('<body>', '''<body>
+</style>
+</head>
+<body>
 <video id="eyeCam" autoplay muted playsinline aria-hidden="true"></video>
 <div id="eyeBox">
   <button id="eyeBtn" class="eye off" title="Eye monitor starts after the car is unlocked" aria-label="Driver eye monitor">
@@ -51,10 +457,779 @@ s = s.replace('<body>', '''<body>
     </svg>
   </button>
   <span id="eyeLbl" hidden></span>
-</div>''', 1)
+</div>
 
-# ---------- JS (goes at the end of the main script, so it can use its functions) ----------
-js = r'''
+<aside id="voiceDock" data-state="idle" aria-label="Saarthi voice assistant">
+  <div class="vd-head" id="vdDrag">
+    <span class="vd-dot" aria-hidden="true"></span><span class="vd-title">Saarthi Voice</span>
+    <button type="button" id="vdMin" class="vd-min" aria-label="Slide assistant to screen edge">›</button>
+  </div>
+  <div class="vd-body">
+    <p class="vd-status" id="vdStatus" aria-live="polite">Voice control is ready. Press Start once and allow microphone access.</p>
+    <div class="vd-actions"><button type="button" id="vdStart">🎙 Start listening</button><button type="button" id="vdStop">Stop</button></div>
+    <div class="vd-transcript" id="vdTranscript">Heard: —</div>
+    <p class="vd-hint">Try: “check vehicle”, “what should I do”, “open maps”, “search maps for Kolkata”, “open YouTube”, “home”, or “help”. Drag this bar to move it.</p>
+  </div>
+</aside>
+
+<section id="home">
+  <h1>Saarthi AI</h1>
+  <p id="homeSub">Verify the driver to continue</p>
+  <div class="choices">
+    <button class="choice" id="goCar" hidden><strong>Car</strong><span>Vehicle health, risk score and safety advice</span></button>
+    <button class="choice" id="goDriver"><strong>Driver</strong><span>Register your face or unlock the car</span></button>
+  </div>
+  <p class="owner-link"><button id="ownerLink">Owner login</button></p>
+</section>
+<section id="driver" hidden>
+  <div class="lockbox">
+    <h2>Driver</h2>
+    <div id="padlock" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="72" height="72">
+        <path id="shackle" d="M20 28 V20 a12 12 0 0 1 24 0 V28" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+        <rect x="12" y="28" width="40" height="28" rx="6" fill="currentColor"/>
+        <circle cx="32" cy="42" r="4" fill="#fff"/>
+      </svg>
+    </div>
+    <video id="cam" autoplay muted playsinline></video>
+    <p id="step"><strong>Step 1 of 2: register your face</strong></p>
+    <p id="lockmsg">Loading face recognition…</p>
+    <input id="drvName" placeholder="Driver name (only needed to register)">
+    <input id="drvPlate" placeholder="Vehicle number (e.g. WB 02 AB 1234)" maxlength="15">
+    <button id="enrollBtn" disabled>Register driver</button>
+    <button id="unlockBtn" disabled hidden>Scan now</button>
+    <button id="openCar" hidden>Open car dashboard</button>
+    <button id="relockBtn" class="ghost" hidden>Lock car again</button>
+    <button id="skipBtn" class="ghost" hidden>Continue without face unlock (demo)</button>
+    <button id="backFromDriver" class="ghost">Back</button>
+  </div>
+</section>
+<main id="car" hidden>
+  <aside class="sl-side">
+    <button id="checkBtn">🔍 Check health of your car</button>
+    <div class="sl-sub" id="lastCheck"></div>
+    <div class="sl-meta"><span class="plate" id="plate" hidden></span> <span id="who">· Driver not verified</span></div>
+    <button id="homeBtn">Home</button>
+    <button id="ownerBtn">🔐 Owner dashboard</button>
+    <div class="sl-apps">
+      <div class="sl-label">Apps</div>
+      <button class="app-ic" id="appYt" title="Open YouTube">
+        <svg viewBox="0 0 32 32"><rect x="2" y="7" width="28" height="18" rx="5" fill="#FF0000"/><path d="M13 12v8l7-4z" fill="#fff"/></svg><span>YouTube</span></button>
+      <button class="app-ic" id="appMaps" title="Open Google Maps">
+        <svg viewBox="0 0 32 32"><path d="M16 2a9 9 0 0 0-9 9c0 7 9 19 9 19s9-12 9-19a9 9 0 0 0-9-9z" fill="#EA4335"/><circle cx="16" cy="11" r="3.5" fill="#fff"/></svg><span>Google Maps</span></button>
+    </div>
+  </aside>
+  <section class="sl-main">
+    <div id="appPanel" hidden>
+      <div class="ap-bar"><button id="appClose">← Back to dashboard</button><h3 class="sl-h" id="apTitle"></h3></div>
+      <div id="apYt" hidden>
+        <div class="ap-row">
+          <input id="ytLink" placeholder="Paste a YouTube video or playlist link, or type words to search" autocomplete="off">
+          <button id="ytPlay" class="pri">▶ Play / Search</button>
+        </div>
+        <div class="sl-sub" style="margin-bottom:10px">YouTube does not allow its website to be shown inside other pages, so paste a link to play it here. Typed words open a YouTube search in a new tab. Watch only as a passenger or when the car is parked.</div>
+        <div id="ytBox"></div>
+      </div>
+      <div id="apMaps" hidden>
+        <div class="ap-row">
+          <input id="mapQ" placeholder="Search a place or destination" autocomplete="off">
+          <button id="mapGo" class="pri">Search</button>
+          <button id="mapMe">📍 My location</button>
+          <a id="mapOpen" class="ap-link" target="_blank" rel="noopener" href="https://www.google.com/maps">Open in Google Maps ↗</a>
+        </div>
+        <div id="mapMsg" class="sl-sub"></div>
+        <div id="mapBox"></div>
+      </div>
+    </div>
+    <div class="sl-title">🚗 Saarthi AI — Driving Safety Co-Pilot</div>
+    <div class="sl-caption">Maruti Suzuki Innovation Challenge · Smart vehicle health monitor</div>
+    <section class="vehicle-showcase" aria-label="Animated 3D-style vehicle model">
+      <div class="vehicle-topline"><span><i class="pulse-dot"></i> DEMO VEHICLE MODEL</span><span class="demo-chip">SIMULATED TELEMETRY</span></div>
+      <div class="vehicle-stage">
+        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+        <div class="vehicle-model" id="vehicle3d" role="application" tabindex="0" aria-label="Interactive 3D vehicle model. Drag to rotate, use buttons to control the view."></div>
+        <div class="vehicle-hint" id="vehicleHint">DRAG TO ROTATE · SCROLL TO ZOOM</div>
+        <div class="vehicle-controls" aria-label="3D car controls">
+          <button type="button" id="viewFront" title="Front view">Front</button>
+          <button type="button" id="viewSide" title="Side view">Side</button>
+          <button type="button" id="viewReset" title="Reset camera">Reset view</button>
+          <button type="button" id="autoRotate" aria-pressed="true" title="Toggle automatic rotation">Auto-rotate: On</button>
+        </div>
+        <div class="part-tag tag-engine"><span>◉</span><div><b>Engine</b><small id="modelEngine">Normal · 86°C</small></div></div>
+        <div class="part-tag tag-tyres"><span>◉</span><div><b>Tyres</b><small id="modelTyres">Normal · 32 PSI</small></div></div>
+        <div class="part-tag tag-battery"><span>▣</span><div><b>Battery</b><small id="modelBattery">Good · 12.6 V</small></div></div>
+        <div class="part-tag tag-brakes"><span>◉</span><div><b>Brakes</b><small id="modelBrakes">Healthy</small></div></div>
+      </div>
+      <div class="vehicle-foot"><span><i class="pulse-dot"></i> Interactive 3D model ready</span><span>Drag to inspect · telemetry is simulated demo data</span></div>
+    </section>
+    <div class="sl-cols a">
+      <div><h3 class="sl-h">Risk Score</h3><div id="risk"></div></div>
+      <div><h3 class="sl-h">Live Telemetry</h3><div id="metrics" class="sl-metrics"></div></div>
+    </div>
+    <h3 class="sl-h">Vehicle Component Health</h3>
+    <div id="componentHealth" class="component-health" aria-live="polite"></div>
+    <hr class="sl-hr">
+    <div class="sl-cols b">
+      <div><h3 class="sl-h">Active Vehicle Alerts</h3><div id="alerts"></div></div>
+      <div>
+        <h3 class="sl-h">Co-Pilot AI Action Steps</h3>
+        <div class="sl-btnrow">
+          <button id="ask">What should I do? 🤔</button>
+          <label class="voice"><input type="checkbox" id="voiceOn" checked> Speak advice</label>
+          <button id="replay" hidden>Replay voice</button>
+        </div>
+        <div id="src"></div>
+        <div id="steps" aria-live="polite"></div>
+      </div>
+    </div>
+    <hr class="sl-hr">
+    <h3 class="sl-h">Recent Trips Trend</h3>
+    <div id="trends"></div>
+  </section>
+</main>
+<section id="owner" hidden>
+  <aside class="sl-side">
+    <div class="sl-label">Owner area</div>
+    <button id="ownerBack">Back</button>
+  </aside>
+  <section class="sl-main">
+    <div class="sl-title">🔐 Owner Dashboard</div>
+    <div class="sl-caption">Who unlocked your car, and when</div>
+    <div id="ownerGate" class="og">
+      <div id="tabs" class="og-tabs"><button id="tabLogin" class="on">Owner login</button><button id="tabReg">New owner? Register</button></div>
+      <div id="loginForm">
+        <p>Enter your vehicle number and owner password.</p>
+        <input id="ownerPlate" placeholder="Vehicle number (e.g. WB 02 AB 1234)" maxlength="15" autocomplete="off">
+        <input type="password" id="ownerPw" placeholder="Owner password" autocomplete="off">
+        <button id="ownerOpen" class="pri">Open dashboard</button>
+      </div>
+      <div id="regForm" hidden>
+        <p>Add your details. A strong password is generated for you automatically.</p>
+        <input id="regPlate" placeholder="Vehicle number (e.g. WB 02 AB 1234)" maxlength="15" autocomplete="off">
+        <input id="regName" placeholder="Owner name" maxlength="40" autocomplete="off">
+        <input id="regContact" placeholder="Email or phone (optional)" maxlength="60" autocomplete="off">
+        <button id="regGo" class="pri">Generate my password</button>
+      </div>
+      <div id="regDone" hidden>
+        <div class="sl-box sl-ok"><b>Owner registered</b> for vehicle <span id="doneVeh"></span>.</div>
+        <p>Your password (shown only once):</p>
+        <div id="newPw" class="pwbox"></div>
+        <button id="copyPw">Copy password</button>
+        <div class="sl-box sl-warn">Save it now. It cannot be shown again or recovered.</div>
+        <p class="sl-sub" id="doneNote"></p>
+        <button id="toLogin" class="pri">Continue to login</button>
+      </div>
+      <div id="ownerMsg"></div>
+    </div>
+    <div id="ownerBody" hidden></div>
+  </section>
+</section>
+<script>
+let scenarios = [], trends = null, cur = -1, lastSpoken = [];
+const $ = (id) => document.getElementById(id);
+const COL = { safe: "#1F8A70", caution: "#D99A00", high: "#C8333D", critical: "#C8333D" };
+const BOX = { critical: "sl-err", warning: "sl-warn", info: "sl-info" };
+
+function spark(vals, color) {
+  const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 200},${52 - ((v - min) / span) * 44}`).join(" ");
+  return `<svg viewBox="0 0 200 60" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="3"/></svg>`;
+}
+
+// Gauge: semicircle 0-100 with green / amber / red bands and a navy bar, like the Streamlit gauge
+const gp = (v, r) => { const a = Math.PI * (1 - v / 100); return [110 + r * Math.cos(a), 105 - r * Math.sin(a)]; };
+function garc(v1, v2, r) {
+  const [x1, y1] = gp(v1, r), [xm, ym] = gp((v1 + v2) / 2, r), [x2, y2] = gp(v2, r);
+  return `M${x1.toFixed(1)} ${y1.toFixed(1)} A${r} ${r} 0 0 1 ${xm.toFixed(1)} ${ym.toFixed(1)} A${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+}
+function gauge(score) {
+  const band = (v1, v2, c) => `<path d="${garc(v1, v2, 76)}" fill="none" stroke="${c}" stroke-width="22"/>`;
+  const ticks = [0, 20, 40, 60, 80, 100].map((v) => { const [x, y] = gp(v, 98); return `<text x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="middle" font-size="9" fill="#808495">${v}</text>`; }).join("");
+  return `<svg viewBox="0 0 220 125">${band(0, 30, "#1F8A70")}${band(30, 70, "#D99A00")}${band(70, 100, "#C8333D")}` +
+    (score > 0 ? `<path d="${garc(0, score, 76)}" fill="none" stroke="#1D3557" stroke-width="14"/>` : "") +
+    `${ticks}<text x="110" y="100" text-anchor="middle" font-size="36" fill="#31333F">${score}</text></svg>`;
+}
+
+function renderEmpty() {
+  const sec = secEvents.map((t) => `<div class="sl-box sl-err"><b>Unauthorized access attempt</b>: Unknown face rejected at ${t}</div>`).join("");
+  $("risk").innerHTML = `<div class="sl-box sl-info">Press <b>Check health of your car</b> to scan the vehicle.</div>`;
+  $("metrics").innerHTML = "";
+  $("componentHealth").innerHTML = ["Engine","Tyres","Battery","Brakes"].map(n => `<div class="health-card"><div class="hc-label">${n}</div><div class="hc-state" style="color:#8aa8ca">Awaiting scan</div><div class="hc-detail">Run vehicle health check</div></div>`).join("");
+  $("alerts").innerHTML = sec || `<div class="sl-box sl-info">No health check has been run yet.</div>`;
+  $("steps").innerHTML = ""; $("src").innerHTML = "";
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  lastSpoken = []; $("replay").hidden = true; $("ask").disabled = true;
+}
+
+function render() {
+  if (cur < 0) return renderEmpty();
+  const s = scenarios[cur], d = s.data, a = s.analysis;
+  $("ask").disabled = false;
+
+  $("risk").innerHTML = `<div class="sl-lvl">Level: ${a.level.toUpperCase()}</div>${gauge(a.score)}`;
+
+  const rain = d.rain[0].toUpperCase() + d.rain.slice(1);
+  const m = [["Fatigue", d.fatigue + "%"], ["Driving Time", d.drivingHours + " hrs"], ["Distraction", d.distraction + "%"],
+    ["Tyre Pressure", d.tyrePressure + " PSI"], ["Engine Temp", d.engineTemp + " °C"]];
+  const setModelValue = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+  setModelValue("modelEngine", (d.engineTemp >= 100 ? "High" : d.engineTemp >= 90 ? "Warm" : "Normal") + " · " + d.engineTemp + "°C");
+  setModelValue("modelTyres", (d.tyrePressure < 28 || d.tyrePressure > 36 ? "Check" : "Normal") + " · " + d.tyrePressure + " PSI");
+  setModelValue("modelBattery", "Good · " + (d.batteryVoltage || "12.6") + " V");
+  setModelValue("modelBrakes", (a.score >= 70 ? "Inspect" : "Healthy"));
+  const componentItems = [
+    {name:"Engine", state:d.engineTemp >= 100 ? "Overheating" : d.engineTemp >= 90 ? "Warm" : "Normal", detail:`${d.engineTemp} °C`, bad:d.engineTemp >= 100, warn:d.engineTemp >= 90 && d.engineTemp < 100},
+    {name:"Tyres", state:d.tyrePressure < 25 ? "Critical pressure" : d.tyrePressure < 28 ? "Low pressure" : d.tyrePressure > 36 ? "High pressure" : "Pressure normal", detail:`${d.tyrePressure} PSI`, bad:d.tyrePressure < 25, warn:(d.tyrePressure >= 25 && d.tyrePressure < 28) || d.tyrePressure > 36},
+    {name:"Battery", state:"Monitoring", detail:`${d.batteryVoltage || "12.6"} V · demo reading`, bad:false, warn:false},
+    {name:"Brakes", state:a.score >= 70 ? "Inspection advised" : "Healthy", detail:a.score >= 70 ? "Elevated risk scenario" : "No simulated warning", bad:a.score >= 85, warn:a.score >= 70 && a.score < 85}
+  ];
+  $("componentHealth").innerHTML = componentItems.map(c => { const color = c.bad ? "#ff5277" : c.warn ? "#ffbd4a" : "#00e0ad"; return `<div class="health-card" style="border-top:2px solid ${color}"><div class="hc-label">${c.name}</div><div class="hc-state" style="color:${color}"><i class="hc-dot" style="background:${color};color:${color}"></i>${c.state}</div><div class="hc-detail">${c.detail}</div></div>`; }).join("");
+  $("metrics").innerHTML = m.map(([n, v]) => `<div class="sl-m"><small>${n}</small><b>${v}</b></div>`).join("") +
+    `<div class="sl-m"><small>Environment</small><b class="sm">${d.isNight ? "Night" : "Day"} | Rain: ${rain}</b></div>`;
+
+  const sec = secEvents.map((t) => `<div class="sl-box sl-err"><b>Unauthorized access attempt</b>: Unknown face rejected at ${t}</div>`).join("");
+  const list = a.alerts.map((x) => `<div class="sl-box ${BOX[x.severity]}"><b>${x.title}</b>: ${x.detail}</div>`).join("");
+  $("alerts").innerHTML = sec + list || `<div class="sl-box sl-ok">All systems nominal. No critical alerts detected.</div>`;
+
+  $("steps").innerHTML = ""; $("src").innerHTML = "";
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  lastSpoken = []; $("replay").hidden = true;
+}
+
+function renderTrends() {
+  const h = trends.history;
+  $("trends").innerHTML = `<div class="sl-trend">
+    <div><small>Tyre pressure (PSI)</small>${spark(h.map((x) => x.tyre), "#D99A00")}</div>
+    <div><small>Battery health (%)</small>${spark(h.map((x) => x.battery), "#C8333D")}</div></div>` +
+    trends.messages.map((t) => `<div class="sl-box sl-warn">${t}</div>`).join("");
+}
+
+const s_level = () => scenarios[cur].analysis.level;
+function speak(lines) {
+  if (!("speechSynthesis" in window) || !$("voiceOn").checked) return;
+  speechSynthesis.cancel();
+  const vs = speechSynthesis.getVoices();
+  const v = vs.find((x) => x.lang === "en-IN") || vs.find((x) => x.lang.startsWith("en"));
+  lines.forEach((t) => { const u = new SpeechSynthesisUtterance(t); if (v) u.voice = v; u.rate = 0.95; speechSynthesis.speak(u); });
+}
+$("replay").onclick = () => speak(lastSpoken);
+$("voiceOn").onchange = () => { if (!$("voiceOn").checked && "speechSynthesis" in window) speechSynthesis.cancel(); };
+
+$("ask").onclick = async () => {
+  const btn = $("ask"); btn.disabled = true; btn.textContent = "Thinking…";
+  try {
+    const r = await fetch("/api/advice", { method: "POST", body: JSON.stringify({ index: cur }) });
+    const j = await r.json();
+    $("steps").innerHTML = j.steps.map((t, i) => `<p><b>${i + 1}.</b> ${t}</p>`).join("");
+    $("src").innerHTML = `<b>Source:</b> <i>SAARTHI AI SAFETY ENGINE</i> <span class="sl-sub">(${j.source === "ai" ? "AI-generated" : "offline safety rules"})</span>`;
+    lastSpoken = s_level() === "critical" ? ["Critical warning.", ...j.steps] : j.steps;
+    $("replay").hidden = false; speak(lastSpoken);
+  } catch {
+    $("steps").innerHTML = "<p>Could not reach the server. Slow down and drive carefully.</p>";
+  }
+  btn.disabled = false; btn.textContent = "What should I do? 🤔";
+};
+
+let checking = false;
+$("checkBtn").onclick = async () => {
+  if (checking) return;
+  const btn = $("checkBtn");
+  checking = true;
+  btn.disabled = true;
+  btn.textContent = "🔍 Scanning vehicle…";
+  try {
+    if (!Array.isArray(scenarios) || !scenarios.length) {
+      const r = await fetch("/api/scenarios");
+      if (!r.ok) throw new Error("Could not load health-check scenarios (HTTP " + r.status + ")");
+      scenarios = await r.json();
+    }
+    if (!Array.isArray(scenarios) || !scenarios.length) throw new Error("No health-check scenarios were returned by the server.");
+    // Demo only: this selects a simulated scenario, not readings from real car sensors.
+    await new Promise(resolve => setTimeout(resolve, 900));
+    let n;
+    do { n = Math.floor(Math.random() * scenarios.length); } while (n === cur && scenarios.length > 1);
+    cur = n;
+    render();
+    $("lastCheck").textContent = "Last check: " + new Date().toLocaleTimeString();
+  } catch (e) {
+    console.error("Vehicle health check failed:", e);
+    $("risk").innerHTML = '<div class="sl-box sl-err"><b>Health check failed.</b> ' + (e.message || "Could not load vehicle data.") + ' Check that the Saarthi AI backend is running, then refresh.</div>';
+    $("alerts").innerHTML = '<div class="sl-box sl-info">No health result is available because the check did not complete.</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔍 Check health of your car";
+    checking = false;
+  }
+};
+
+(async () => {
+  try {
+    const [scenarioResponse, trendsResponse] = await Promise.all([fetch("/api/scenarios"), fetch("/api/trends")]);
+    if (!scenarioResponse.ok) throw new Error("Could not load scenarios (HTTP " + scenarioResponse.status + ")");
+    if (!trendsResponse.ok) throw new Error("Could not load trends (HTTP " + trendsResponse.status + ")");
+    scenarios = await scenarioResponse.json();
+    trends = await trendsResponse.json();
+    render();
+    renderTrends();
+  } catch (e) {
+    console.error("Saarthi AI data initialization failed:", e);
+    $("risk").innerHTML = '<div class="sl-box sl-err"><b>Backend data failed to load.</b> ' + (e.message || "Start the backend and refresh this page.") + '</div>';
+    $("alerts").innerHTML = '<div class="sl-box sl-info">The dashboard is waiting for backend data. Start the Saarthi AI server and refresh.</div>';
+  }
+})();
+
+// ---- Sounds (generated in the browser, no files) ----
+let ac;
+const audio = () => ac || (ac = new (window.AudioContext || window.webkitAudioContext)());
+function beep(freq, dur, type, delay, vol) {
+  try {
+    const a = audio(), o = a.createOscillator(), g = a.createGain(), t = a.currentTime + delay;
+    o.type = type; o.frequency.value = freq; o.connect(g); g.connect(a.destination);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.start(t); o.stop(t + dur);
+  } catch (e) {}
+}
+const clickSound = () => { beep(180, 0.08, "square", 0, 0.2); beep(440, 0.14, "square", 0.12, 0.15); };
+const denySound = () => { beep(220, 0.25, "sawtooth", 0, 0.2); beep(150, 0.4, "sawtooth", 0.3, 0.2); };
+function speakNow(t) {
+  if (!("speechSynthesis" in window) || !$("voiceOn").checked) return;
+  speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(t));
+}
+const setLock = (open) => { $("padlock").classList.remove("denied"); $("padlock").classList.toggle("open", open); };
+
+// ---- Views ----
+let isUnlocked = false;
+function show(v) {
+  if (v === "car" && !isUnlocked) v = "driver";
+  ["home", "driver", "car", "owner"].forEach((id) => ($(id).hidden = id !== v));
+  if (v !== "owner") ownerReset();
+  if (v !== "car") closeApp();
+  if (v === "owner") $("ownerPlate").focus();
+  if (v === "driver") initFace(); else stopCam();
+  if (v === "car" && scenarios.length) render();
+}
+$("goCar").onclick = () => show("car");
+$("goDriver").onclick = () => { try { audio().resume(); } catch (e) {} show("driver"); };
+$("homeBtn").onclick = () => show("home");
+$("backFromDriver").onclick = () => show("home");
+$("openCar").onclick = () => show("car");
+
+// ---- Face recognition (runs fully in the browser) ----
+const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/";
+const KEY = "saarthi_drivers", THRESHOLD = 0.5, MAX_FAILS = 5;
+const secEvents = [];
+let fails = 0, modelsReady = false, scanning = false, scanTimer = null;
+let relockCooldown = false;
+let relockCountdownTimer = null;
+const drivers = () => JSON.parse(localStorage.getItem(KEY) || "[]");
+const say = (t, bad) => { $("lockmsg").textContent = t; $("lockmsg").className = bad ? "bad" : ""; };
+const secHtml = () => secEvents.map((t) =>
+  `<div class="alert critical"><strong>Unauthorized access attempt</strong><span>Unknown face rejected at ${t}</span></div>`).join("");
+
+function refreshSteps() {
+  const reg = drivers().length > 0;
+  $("unlockBtn").hidden = !reg;
+  $("step").innerHTML = reg
+    ? "<strong>Step 2 of 2: unlock the car</strong>"
+    : "<strong>Step 1 of 2: register your face</strong>";
+}
+
+function stopScan() {
+  scanning = false;
+  clearTimeout(scanTimer);
+  scanTimer = null;
+}
+
+function startScan() {
+  // Don't start automatic scanning during the relock cooldown.
+  if (relockCooldown || isUnlocked) return;
+
+  console.log("scan started");
+  stopScan();
+  scanning = true;
+  scanLoop();
+}
+
+async function scanLoop() {
+  if (!scanning || relockCooldown || isUnlocked) return;
+
+  await attempt(true);
+
+  if (scanning && !relockCooldown && !isUnlocked) {
+    scanTimer = setTimeout(scanLoop, 700);
+  } else {
+    console.log("scan stopped");
+  }
+}
+const stopCam = () => { stopScan(); const v = $("cam").srcObject; if (v) v.getTracks().forEach((t) => t.stop()); $("cam").srcObject = null; };
+
+function unlocked(name, plate) {
+  fails = 0; isUnlocked = true; stopScan(); cur = -1;
+  currentDriver = { name: name || "Demo (face unlock skipped)", plate: plate || "" };
+  logEvent("unlock", currentDriver.name, currentDriver.plate);
+  $("goCar").hidden = false; $("homeSub").textContent = "Driver verified. Choose a mode";
+  $("who").textContent = name ? "· Driver: " + name : "· Face unlock skipped";
+  $("plate").textContent = plate || ""; $("plate").hidden = !plate;
+  say(name ? `Welcome, ${name}. ${plate ? "Vehicle " + plate + " " : "Car "}unlocked.` : "Face unlock skipped for this demo.");
+  setLock(true); clickSound(); speakNow(name ? `Welcome ${name}. Car unlocked.` : "Car unlocked.");
+  $("step").innerHTML = "<strong>Car unlocked</strong>";
+  $("unlockBtn").disabled = $("enrollBtn").disabled = true;
+  $("openCar").hidden = false; $("relockBtn").hidden = false; $("skipBtn").hidden = true;
+  stopCam();
+}
+
+async function descriptor() {
+  const video = $("cam");
+
+  if (!video.srcObject) {
+    throw new Error("Camera stream is not active.");
+  }
+
+  // Wait until the camera has produced usable video frames.
+  if (
+    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+    video.videoWidth === 0 ||
+    video.videoHeight === 0
+  ) {
+    console.log("Camera is not ready for face detection yet.");
+    return null;
+  }
+
+  console.log("Running face detection:", video.videoWidth, "x", video.videoHeight);
+
+  const result = await faceapi
+    .detectSingleFace(
+      video,
+      new faceapi.TinyFaceDetectorOptions({
+        inputSize: 320,
+        scoreThreshold: 0.5
+      })
+    )
+    .withFaceLandmarks()
+    .withFaceDescriptor();
+
+  console.log("Face detection completed:", result ? "Face detected" : "No face detected");
+
+  return result ? result.descriptor : null;
+}
+
+function deny() {
+  stopScan(); secEvents.push(new Date().toLocaleTimeString());
+  logEvent("denied", "Unknown face", (drivers()[0] || {}).plate || "");
+  $("padlock").classList.add("denied"); denySound();
+  say("Unknown driver. Access denied and owner alert recorded (simulated).", true);
+  $("unlockBtn").disabled = true;
+  setTimeout(() => {
+    fails = 0; $("padlock").classList.remove("denied");
+    if (!isUnlocked && $("cam").srcObject) { $("unlockBtn").disabled = false; say("Look at the camera. Scanning…"); startScan(); }
+  }, 15000);
+}
+
+async function attempt(auto) {
+  if (isUnlocked) return;
+
+  // Block automatic scans during cooldown, but allow manual scans.
+  if (relockCooldown && auto) {
+    say("Auto-unlock paused. Manual scan is available.");
+    return;
+  }
+
+  let d;
+
+  try { d = await descriptor(); } catch (e) { console.warn("scan error", e); say("Scan error: " + (e.message || e), true); return; }
+  if (isUnlocked) return;
+  if (!d) { fails = 0; say(auto ? "Waiting for a face…" : "No face found. Face the camera in good light.", !auto); return; }
+  let best = { name: null, plate: null, dist: 9 };
+  drivers().forEach((x) => { const dist = faceapi.euclideanDistance(d, Float32Array.from(x.d)); if (dist < best.dist) best = { name: x.name, plate: x.plate, dist }; });
+  if (best.dist < THRESHOLD) return unlocked(best.name, best.plate);
+  fails++;
+  say(`Face not recognised (${fails}/${MAX_FAILS}).`, true);
+  if (fails >= MAX_FAILS) deny();
+}
+
+async function initFace() {
+  stopScan(); fails = 0;
+  $("openCar").hidden = true; $("skipBtn").hidden = true; $("relockBtn").hidden = true;
+  if (isUnlocked) {
+    setLock(true); say("Car already unlocked."); $("step").innerHTML = "<strong>Car unlocked</strong>";
+    $("openCar").hidden = false; $("relockBtn").hidden = false; $("unlockBtn").hidden = true; $("enrollBtn").disabled = true;
+    return;
+  }
+  setLock(false);
+  $("unlockBtn").disabled = $("enrollBtn").disabled = true;
+  say("Loading face recognition…"); refreshSteps();
+  try {
+    if (!modelsReady) {
+      await Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)]);
+      modelsReady = true;
+    }
+    const video = $("cam");
+
+    video.srcObject = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: "user",
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      }
+    });
+
+    await video.play();
+
+    // Wait for actual video frames, not just camera permission.
+    const deadline = Date.now() + 8000;
+    while (
+      (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth === 0) {
+      throw new Error("Camera opened but no video frames are available.");
+    }
+
+    $("unlockBtn").disabled = $("enrollBtn").disabled = false;
+    refreshSteps();
+
+    if (drivers().length) {
+      say("Auto scanning…");
+      startScan();
+    } else {
+      say("Enter your name and vehicle number, then press Register driver.");
+    }
+  } catch (e) {
+    console.error("Face initialization failed:", e);
+    say("Camera or face recognition failed: " + (e.message || "Unknown error"), true);
+    $("skipBtn").hidden = false;
+  }
+}
+
+$("enrollBtn").onclick = async () => {
+  const name = $("drvName").value.trim();
+  const plate = $("drvPlate").value.trim().toUpperCase().replace(/\s+/g, " ");
+  if (!name) return say("Enter the driver name first.", true);
+  if (!plate) return say("Enter the vehicle number first.", true);
+  stopScan(); say("Scanning…");
+  const d = await descriptor();
+  if (!d) { say("No face found. Face the camera in good light.", true); if (drivers().length) startScan(); return; }
+  localStorage.setItem(KEY, JSON.stringify([...drivers(), { name, plate, d: Array.from(d) }]));
+  refreshSteps();
+  say(`${name} registered with vehicle ${plate}. Scanning to unlock in 3 seconds…`);
+  setTimeout(() => { if (!isUnlocked && $("cam").srcObject) { say("Look at the camera. Scanning…"); startScan(); } }, 3000);
+};
+
+$("unlockBtn").onclick = () => { if (!drivers().length) return say("Register a driver first.", true); attempt(false); };
+$("skipBtn").onclick = () => unlocked(null);
+
+$("relockBtn").onclick = () => {
+  stopScan();
+clearInterval(relockCountdownTimer);
+relockCooldown = true;
+  if (currentDriver) {
+    logEvent("lock", currentDriver.name, currentDriver.plate);
+  }
+
+  // Stop scanning and cancel any previous countdown.
+  stopScan();
+  clearInterval(relockCountdownTimer);
+
+  currentDriver = null;
+  isUnlocked = false;
+
+  $("goCar").hidden = true;
+  $("who").textContent = "· Driver not verified";
+  $("plate").hidden = true;
+  $("homeSub").textContent = "Verify the driver to continue";
+
+  // Keep the car locked during the cooldown.
+  setLock(false);
+
+  let seconds = 20;
+
+  $("unlockBtn").disabled = true;
+  $("enrollBtn").disabled = true;
+  $("unlockBtn").hidden = false;
+
+  const updateCountdown = () => {
+    say(
+      `Please remove your face from the camera to ensure the car is locked properly. Auto-unlock will begin in ${seconds} second${seconds === 1 ? "" : "s"}…`
+    );
+  };
+
+  updateCountdown();
+
+  
+relockCountdownTimer = setInterval(() => {
+  seconds--;
+
+  if (seconds <= 0) {
+    clearInterval(relockCountdownTimer);
+    relockCountdownTimer = null;
+
+    if (isUnlocked || !$("cam").srcObject) return;
+
+    relockCooldown = false;
+    say("Cooldown complete. Auto-scanning…");
+    startScan();
+    return;
+  }
+
+  updateCountdown();
+}, 1000);
+
+  // Reinitialize the camera only if it is not already running.
+  if (!$("cam").srcObject) {
+    initFace();
+  }
+};
+
+
+// ---- Owner area: register (password is generated for you) and log in per vehicle ----
+let ownerToken = "", ownerTimer = null, currentDriver = null;
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function logEvent(type, name, plate) {
+  try { fetch("/api/log", { method: "POST", body: JSON.stringify({ type, name, plate }) }).catch(() => {}); } catch (e) {}
+}
+const fmt = (iso) => new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+const dur = (s) => (s === null || s === undefined ? "" : s < 60 ? s + " s" : Math.floor(s / 60) + " min " + (s % 60) + " s");
+const EV = { unlock: ["🔓 Unlocked", "unlock"], lock: ["🔒 Locked again", "lock"], denied: ["🚫 Access denied", "denied"] };
+const post = (url, body) => fetch(url, { method: "POST", body: JSON.stringify(body) });
+
+function tab(which) {
+  $("loginForm").hidden = which !== "login"; $("regForm").hidden = which !== "reg"; $("regDone").hidden = true;
+  $("tabLogin").classList.toggle("on", which === "login"); $("tabReg").classList.toggle("on", which === "reg");
+  $("tabs").hidden = false; $("ownerMsg").textContent = "";
+}
+function ownerReset() {
+  ownerToken = ""; clearInterval(ownerTimer);
+  $("ownerBody").hidden = true; $("ownerGate").hidden = false; $("ownerPw").value = ""; $("newPw").textContent = "";
+  tab("login");
+}
+
+function renderOwner(j) {
+  const st = j.stats, c = st.current;
+  const now = c.state === "unlocked"
+    ? `<div class="sl-box sl-ok"><b>Car is UNLOCKED</b> by ${esc(c.name)} since ${fmt(c.since)}.</div>`
+    : `<div class="sl-box sl-info"><b>Car is LOCKED.</b></div>`;
+  const stat = [["Times unlocked", st.unlocks], ["Different drivers", st.drivers], ["Locked again", st.locks], ["Denied attempts", st.denied]];
+  const rows = j.events.map((e) => `<tr><td>${fmt(e.time)}</td><td>${esc(e.name)}</td>` +
+    `<td class="ev ${EV[e.type][1]}">${EV[e.type][0]}</td><td>${e.type === "lock" && e.durationSec !== null ? "Was unlocked for " + dur(e.durationSec) : ""}</td></tr>`).join("");
+  $("ownerBody").innerHTML =
+    `<div class="sl-box sl-info">Owner: <b>${esc(j.owner.name)}</b> · Vehicle <span class="plate">${esc(j.owner.plate)}</span></div>` + now +
+    `<div class="sl-metrics" style="margin:16px 0 8px">${stat.map(([n, v]) => `<div class="sl-m"><small>${n}</small><b>${v}</b></div>`).join("")}</div>` +
+    `<hr class="sl-hr"><h3 class="sl-h">Access log</h3>` +
+    (rows ? `<div class="sl-tablewrap"><table class="sl-table"><thead><tr><th>Date and time</th><th>Driver</th><th>Event</th><th>Details</th></tr></thead><tbody>${rows}</tbody></table></div>`
+          : `<div class="sl-box sl-info">No activity yet for this vehicle.</div>`) +
+    `<p class="sl-sub">Updates every 5 seconds. Times are shown in your device's time zone. This page shows only your vehicle.</p>`;
+}
+
+async function loadOwner() {
+  try {
+    const r = await fetch("/api/log", { headers: { "x-owner-token": ownerToken } });
+    if (r.status === 401) { ownerReset(); $("ownerMsg").textContent = "Session expired. Please log in again."; return false; }
+    renderOwner(await r.json()); return true;
+  } catch (e) { $("ownerMsg").textContent = "Could not reach the server."; return false; }
+}
+
+async function openOwner() {
+  const plate = $("ownerPlate").value.trim(), password = $("ownerPw").value;
+  if (!plate || !password) return ($("ownerMsg").textContent = "Enter the vehicle number and the password.");
+  $("ownerMsg").textContent = "Checking…";
+  try {
+    const r = await post("/api/owner/login", { plate, password });
+    if (r.status === 429) return ($("ownerMsg").textContent = "Too many wrong attempts. Wait a minute and try again.");
+    if (!r.ok) return ($("ownerMsg").textContent = "Wrong vehicle number or password.");
+    ownerToken = (await r.json()).token; $("ownerPw").value = "";
+    if (await loadOwner()) {
+      $("ownerMsg").textContent = ""; $("ownerGate").hidden = true; $("ownerBody").hidden = false;
+      clearInterval(ownerTimer); ownerTimer = setInterval(loadOwner, 5000);
+    }
+  } catch (e) { $("ownerMsg").textContent = "Could not reach the server."; }
+}
+
+async function registerOwner() {
+  const plate = $("regPlate").value.trim(), name = $("regName").value.trim(), contact = $("regContact").value.trim();
+  if (!plate || !name) return ($("ownerMsg").textContent = "Enter the vehicle number and the owner name.");
+  $("ownerMsg").textContent = "Generating your password…";
+  try {
+    const r = await post("/api/owner/register", { plate, name, contact });
+    const j = await r.json();
+    if (!r.ok) return ($("ownerMsg").textContent = j.error || "Could not register.");
+    $("ownerMsg").textContent = "";
+    $("regForm").hidden = true; $("tabs").hidden = true; $("regDone").hidden = false;
+    $("doneVeh").textContent = j.plate; $("newPw").textContent = j.password;
+    $("doneNote").textContent = `Generated by the ${j.engine} security module. Only a scrambled hash is stored on the server, so this password cannot be recovered.`;
+    $("ownerPlate").value = j.plate;
+    $("regPlate").value = $("regName").value = $("regContact").value = "";
+  } catch (e) { $("ownerMsg").textContent = "Could not reach the server."; }
+}
+
+$("ownerOpen").onclick = openOwner;
+$("ownerPw").onkeydown = (e) => { if (e.key === "Enter") openOwner(); };
+$("regGo").onclick = registerOwner;
+$("tabLogin").onclick = () => tab("login");
+$("tabReg").onclick = () => tab("reg");
+$("toLogin").onclick = () => { $("newPw").textContent = ""; tab("login"); $("ownerPw").focus(); };
+$("copyPw").onclick = async () => {
+  try { await navigator.clipboard.writeText($("newPw").textContent); $("copyPw").textContent = "Copied ✓"; setTimeout(() => ($("copyPw").textContent = "Copy password"), 2000); }
+  catch (e) { $("copyPw").textContent = "Select and copy it manually"; }
+};
+$("ownerBtn").onclick = () => show("owner");
+$("ownerLink").onclick = () => show("owner");
+$("ownerBack").onclick = () => show(isUnlocked ? "car" : "home");
+
+// ---- Apps: YouTube and Google Maps open on the right side ----
+const mainBox = document.querySelector("#car .sl-main");
+let openedApp = "";
+function closeApp() {
+  openedApp = "";
+  mainBox.classList.remove("app"); $("appPanel").hidden = true;
+  $("ytBox").innerHTML = ""; $("mapBox").innerHTML = "";          // removing the frames also stops any video
+  $("appYt").classList.remove("on"); $("appMaps").classList.remove("on");
+}
+function openApp(which) {
+  if (openedApp === which) return closeApp();
+  openedApp = which;
+  mainBox.classList.add("app"); $("appPanel").hidden = false;
+  $("apYt").hidden = which !== "yt"; $("apMaps").hidden = which !== "maps";
+  $("apTitle").textContent = which === "yt" ? "YouTube" : "Google Maps";
+  $("appYt").classList.toggle("on", which === "yt"); $("appMaps").classList.toggle("on", which === "maps");
+  if (which === "maps" && !$("mapBox").innerHTML) showMap("India", 5);
+  if (which === "yt") $("ytLink").focus();
+}
+function ytEmbed(text) {
+  const list = (text.match(/[?&]list=([\w-]+)/) || [])[1];
+  const id = (text.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/) || [])[1];
+  if (id) return `https://www.youtube.com/embed/${id}?autoplay=1&rel=0` + (list ? `&list=${list}` : "");
+  if (list) return `https://www.youtube.com/embed/videoseries?list=${list}&autoplay=1`;
+  return null;
+}
+function playYt() {
+  const t = $("ytLink").value.trim();
+  if (!t) return;
+  const url = ytEmbed(t);
+  if (url) $("ytBox").innerHTML = `<iframe class="ap-frame" src="${url}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+  else window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(t), "_blank", "noopener");
+}
+function showMap(q, zoom) {
+  $("mapBox").innerHTML = `<iframe class="ap-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen src="https://www.google.com/maps?q=${encodeURIComponent(q)}&z=${zoom}&output=embed"></iframe>`;
+  $("mapOpen").href = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q);
+}
+$("appYt").onclick = () => openApp("yt");
+$("appMaps").onclick = () => openApp("maps");
+$("appClose").onclick = closeApp;
+$("ytPlay").onclick = playYt;
+$("ytLink").onkeydown = (e) => { if (e.key === "Enter") playYt(); };
+$("mapGo").onclick = () => { const q = $("mapQ").value.trim(); if (q) { $("mapMsg").textContent = ""; showMap(q, 14); } };
+$("mapQ").onkeydown = (e) => { if (e.key === "Enter") $("mapGo").onclick(); };
+$("mapMe").onclick = () => {
+  if (!navigator.geolocation) return ($("mapMsg").textContent = "This browser cannot share your location.");
+  $("mapMsg").textContent = "Finding your location…";
+  navigator.geolocation.getCurrentPosition(
+    (p) => { $("mapMsg").textContent = ""; showMap(p.coords.latitude + "," + p.coords.longitude, 15); },
+    () => ($("mapMsg").textContent = "Could not get your location. Allow location access for this site, or search for a place."));
+};
+
 // ---- Driver eye monitor: camera stays on after unlock; beeps if the eyes stay closed for 3 seconds ----
 let EYE_CLOSED_MS = 3000, EYE_NOFACE_MS = 5000;
 let eyeOn = false, eyeStream = null, eyeUserOff = false, eyeAlerts = 0, eyeRun = 0, eyeLast = "";
@@ -98,7 +1273,7 @@ async function eyeStart() {
     eyeStream = stream;
     const v = $("eyeCam"); v.srcObject = stream; await v.play();
 
-    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.35 });
     const samples = []; let base = 0, closedSince = 0, lastSeen = Date.now(), lastBeep = 0, alarm = false;
     while (run === eyeRun) {
       const now = Date.now();
@@ -125,11 +1300,11 @@ async function eyeStart() {
             if (b80 < 0.15) samples.length = 0; else base = b80;
           }
         } else {
-          const closed = ear < base * 0.72;
+          const closed = ear < base * 0.82;
           if (!closed) {
-            if (ear > base * 0.85) base = base * 0.98 + ear * 0.02;   // follow slow lighting / posture changes
+            if (ear > base * 0.95) base = base * 0.995 + ear * 0.005; // slowly adapt only to confidently open eyes
             closedSince = 0; alarm = false;
-            eyeSet("open", "Eyes open");
+            eyeSet("open", "Eyes open · EAR " + ear.toFixed(3) + " / baseline " + base.toFixed(3));
           } else {
             if (!closedSince) closedSince = now;
             const ms = now - closedSince;
@@ -137,11 +1312,11 @@ async function eyeStart() {
               if (!alarm) { alarm = true; eyeAlerts++; }
               eyeSet("alarm", "Eyes closed for " + Math.floor(ms / 1000) + " s");
               if (now - lastBeep > 900) { eyeBeep(); lastBeep = now; }   // keeps beeping until the eyes open
-            } else eyeSet("closed", "Eyes closed");
+            } else eyeSet("closed", "Eyes closing · EAR " + ear.toFixed(3) + " / baseline " + base.toFixed(3));
           }
         }
       }
-      await eyeWait(90);
+      await eyeWait(60);
     }
   } catch (e) {
     if (run === eyeRun) { eyeOn = false; eyeSet("off", "Eye monitor unavailable: " + (e.message || e)); }
@@ -159,14 +1334,111 @@ const eyeUnlockedOrig = unlocked;
 unlocked = function () { const out = eyeUnlockedOrig.apply(this, arguments); eyeStart(); return out; };
 const eyeRelockOrig = $("relockBtn").onclick;
 $("relockBtn").onclick = function () { const out = eyeRelockOrig.apply(this, arguments); if (!isUnlocked) eyeStop(); return out; };
-'''
-b = s.index('<body>')
-start = s.index('<script>', b)
-end = s.index('</script>', start)
-main = s[start:end]
-for need in ['function unlocked(', 'function beep(', 'modelsReady', 'MODEL_URL', '$("relockBtn").onclick']:
-    if need not in main: stop("main script piece: " + need)
-s = s[:end] + js + s[end:]
-
-open(PATH, "w", encoding="utf-8").write(s)
-print("Done: eye icon added in the top-left corner. The eye monitor starts when the car is unlocked.")
+</script>
+<script type="module">
+// Real WebGL 3D sedan viewer. Three.js is loaded from a CDN; the existing app/backend remains unchanged.
+(async function initSaarthi3D(){
+  const host = document.getElementById('vehicle3d');
+  if (!host) return;
+  try {
+    const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x061329, 10, 24);
+    const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true, powerPreference:'high-performance'});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(host.clientWidth || 800, host.clientHeight || 340);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.18;
+    host.appendChild(renderer.domElement);
+    const camera = new THREE.PerspectiveCamera(36, (host.clientWidth || 800)/(host.clientHeight || 340), .1, 100);
+    let theta = 0.78, phi = 1.12, radius = 8.8, auto = true, dragging = false, moved = false, px=0, py=0;
+    const target = new THREE.Vector3(0, .62, 0);
+    const car = new THREE.Group(); scene.add(car);
+    const mat = (color, metalness=.2, roughness=.3, extra={}) => new THREE.MeshStandardMaterial({color, metalness, roughness, ...extra});
+    const paint = mat(0x087fc5,.72,.23,{emissive:0x031a36,emissiveIntensity:.65});
+    const brightPaint = mat(0x20c8ff,.55,.22,{emissive:0x006a9c,emissiveIntensity:.25});
+    const glass = mat(0x07182c,.45,.13,{metalness:.45});
+    const rubber = mat(0x080d15,.05,.8);
+    const alloy = mat(0x8ddff6,.85,.22);
+    const darkMetal = mat(0x14283b,.75,.3);
+    const headlight = new THREE.MeshStandardMaterial({color:0xcaf7ff,emissive:0x5be8ff,emissiveIntensity:2.8});
+    const taillight = new THREE.MeshStandardMaterial({color:0xff244e,emissive:0xff123d,emissiveIntensity:2.1});
+    const addMesh=(geo, material, pos, parent=car)=>{const m=new THREE.Mesh(geo,material);m.position.set(...pos);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;};
+    // Low, sculpted chassis and front/rear bumpers.
+    addMesh(new THREE.BoxGeometry(2.02,.48,4.05),paint,[0,.66,0]);
+    addMesh(new THREE.BoxGeometry(2.08,.22,3.5),brightPaint,[0,.48,-.05]);
+    addMesh(new THREE.BoxGeometry(2.12,.18,.34),darkMetal,[0,.51,2.02]);
+    addMesh(new THREE.BoxGeometry(2.12,.18,.32),darkMetal,[0,.51,-2.02]);
+    // Roof/cabin as a real extruded 3D mesh, with angled windscreen silhouette.
+    const cabinShape = new THREE.Shape();
+    cabinShape.moveTo(-.86,0); cabinShape.lineTo(-.60,.55); cabinShape.quadraticCurveTo(-.48,.69,-.25,.70); cabinShape.lineTo(.48,.68); cabinShape.quadraticCurveTo(.68,.65,.79,.43); cabinShape.lineTo(.99,0); cabinShape.closePath();
+    const cabinGeo = new THREE.ExtrudeGeometry(cabinShape,{depth:2.12,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.045,bevelThickness:.045,curveSegments:8});
+    cabinGeo.translate(0,0,-1.06);
+    const cabin = new THREE.Mesh(cabinGeo,paint); cabin.position.set(0,.86,-.12); cabin.castShadow=true; car.add(cabin);
+    // Roof panel and dark panoramic windows on both sides.
+    addMesh(new THREE.BoxGeometry(1.15,.035,1.22),glass,[0,1.54,-.12]);
+    for (const side of [-1,1]) {
+      const sideGlass = addMesh(new THREE.BoxGeometry(.035,.36,1.42),glass,[side*.895,1.22,-.18]);
+      sideGlass.rotation.z = side * -.08;
+      addMesh(new THREE.BoxGeometry(.045,.035,1.56),brightPaint,[side*.925,1.02,-.17]);
+      addMesh(new THREE.BoxGeometry(.12,.08,.3),darkMetal,[side*1.01,1.0,.72]);
+      // Door seams and handles add depth to the body sides.
+      for (const z of [-.8,.38]) addMesh(new THREE.BoxGeometry(.012,.28,.012),darkMetal,[side*1.012,.76,z]);
+      addMesh(new THREE.BoxGeometry(.025,.025,.2),alloy,[side*1.022,.91,.15]);
+    }
+    // Four real cylindrical wheels with hubs and radial spokes.
+    const wheels=[];
+    for (const x of [-1.01,1.01]) for (const z of [-1.32,1.34]) {
+      const wheelGroup = new THREE.Group(); wheelGroup.position.set(x,.48,z); car.add(wheelGroup); wheels.push(wheelGroup);
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(.39,.39,.22,40),rubber); tire.rotation.z=Math.PI/2; tire.castShadow=true; wheelGroup.add(tire);
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(.255,.255,.235,32),darkMetal); rim.rotation.z=Math.PI/2; wheelGroup.add(rim);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(.075,.075,.25,20),alloy); hub.rotation.z=Math.PI/2; wheelGroup.add(hub);
+      for(let i=0;i<10;i++){const a=i*Math.PI/5;const spoke=addMesh(new THREE.BoxGeometry(.025,.035,.39),alloy,[0,0,0],wheelGroup);spoke.position.set(0,Math.cos(a)*.15,Math.sin(a)*.15);spoke.rotation.x=-a;}
+    }
+    // Front fascia, grille, lights, mirrors, tail lamps and trim.
+    addMesh(new THREE.BoxGeometry(.72,.19,.035),darkMetal,[0,.61,2.205]);
+    addMesh(new THREE.BoxGeometry(.48,.04,.045),brightPaint,[0,.59,2.23]);
+    for(const x of [-.72,.72]){
+      const lamp=addMesh(new THREE.BoxGeometry(.43,.09,.055),headlight,[x,.79,2.14]);lamp.rotation.y=x*.12;
+      addMesh(new THREE.BoxGeometry(.32,.075,.035),taillight,[x,.78,-2.12]);
+      addMesh(new THREE.BoxGeometry(.17,.1,.22),paint,[x*1.17,1.03,.63]);
+      addMesh(new THREE.BoxGeometry(.18,.04,.17),glass,[x*1.18,1.08,.64]);
+    }
+    addMesh(new THREE.BoxGeometry(1.22,.025,.07),brightPaint,[0,.88,-1.99]);
+    // Underbody glow strip and floor.
+    const underGlow = new THREE.Mesh(new THREE.BoxGeometry(1.85,.018,3.5),new THREE.MeshBasicMaterial({color:0x00bfff,transparent:true,opacity:.45}));underGlow.position.set(0,.35,0);car.add(underGlow);
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(4.3,80),new THREE.MeshBasicMaterial({color:0x0879b5,transparent:true,opacity:.12,side:THREE.DoubleSide}));floor.rotation.x=-Math.PI/2;floor.position.y=.05;scene.add(floor);
+    const grid = new THREE.GridHelper(16,32,0x12517a,0x12314e);grid.position.y=.035;scene.add(grid);
+    scene.add(new THREE.HemisphereLight(0x9bdfff,0x071226,2.0));
+    const key = new THREE.DirectionalLight(0xd9f5ff,3.2);key.position.set(4,7,5);scene.add(key);
+    const rimLight = new THREE.PointLight(0x00bfff,22,10);rimLight.position.set(-3,2,-2);scene.add(rimLight);
+    const frontLight = new THREE.PointLight(0x65eaff,12,7);frontLight.position.set(0,1.2,3.4);scene.add(frontLight);
+    function cameraUpdate(){const sp=Math.sin(phi);camera.position.set(target.x+radius*sp*Math.sin(theta),target.y+radius*Math.cos(phi),target.z+radius*sp*Math.cos(theta));camera.lookAt(target);}
+    cameraUpdate();
+    const resize=()=>{const w=Math.max(1,host.clientWidth),h=Math.max(1,host.clientHeight);renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();};
+    new ResizeObserver(resize).observe(host);
+    host.addEventListener('pointerdown',e=>{dragging=true;moved=false;px=e.clientX;py=e.clientY;host.setPointerCapture?.(e.pointerId);});
+    host.addEventListener('pointermove',e=>{if(!dragging)return;const dx=e.clientX-px,dy=e.clientY-py;if(Math.abs(dx)+Math.abs(dy)>1)moved=true;theta-=dx*.008;phi=Math.max(.35,Math.min(1.48,phi+dy*.006));px=e.clientX;py=e.clientY;cameraUpdate();if(moved)auto=false;});
+    const endDrag=()=>{dragging=false;};host.addEventListener('pointerup',endDrag);host.addEventListener('pointercancel',endDrag);
+    host.addEventListener('wheel',e=>{e.preventDefault();radius=Math.max(5.4,Math.min(12,radius+e.deltaY*.008));cameraUpdate();},{passive:false});
+    host.addEventListener('keydown',e=>{if(e.key==='ArrowLeft')theta-=.12;else if(e.key==='ArrowRight')theta+=.12;else if(e.key==='ArrowUp')phi=Math.max(.35,phi-.08);else if(e.key==='ArrowDown')phi=Math.min(1.48,phi+.08);else return;cameraUpdate();});
+    document.getElementById('viewFront')?.addEventListener('click',()=>{theta=0;phi=1.18;radius=8.2;auto=false;cameraUpdate();});
+    document.getElementById('viewSide')?.addEventListener('click',()=>{theta=Math.PI/2;phi=1.22;radius=8.7;auto=false;cameraUpdate();});
+    document.getElementById('viewReset')?.addEventListener('click',()=>{theta=.78;phi=1.12;radius=8.8;auto=true;cameraUpdate();setAutoButton();});
+    const autoBtn=document.getElementById('autoRotate');
+    function setAutoButton(){if(autoBtn){autoBtn.textContent='Auto-rotate: '+(auto?'On':'Off');autoBtn.setAttribute('aria-pressed',String(auto));}}
+    autoBtn?.addEventListener('click',()=>{auto=!auto;setAutoButton();});
+    let last=0;
+    function animate(t){requestAnimationFrame(animate);const dt=Math.min(.05,(t-last)/1000||0);last=t;if(auto&&!dragging)theta+=dt*.23;car.position.y=.015*Math.sin(t*.0015);wheels.forEach(w=>{w.rotation.x+=dt*1.4;});cameraUpdate();renderer.render(scene,camera);}
+    setAutoButton();requestAnimationFrame(animate);
+    window.addEventListener('beforeunload',()=>{renderer.dispose();});
+  } catch (err) {
+    console.error('3D vehicle viewer could not start:',err);
+    host.innerHTML='<div style="height:100%;display:grid;place-items:center;padding:24px;text-align:center;color:#b8d8f3;background:radial-gradient(ellipse,#12365b,#061329)"><div><strong style="font-size:18px">3D viewer could not load</strong><p style="font-size:13px">Check your internet connection and reload. The Three.js 3D engine loads from a CDN.</p></div></div>';
+    const hint=document.getElementById('vehicleHint');if(hint)hint.textContent='3D ENGINE UNAVAILABLE';
+  }
+})();
+</script>
+</body>
+</html>
