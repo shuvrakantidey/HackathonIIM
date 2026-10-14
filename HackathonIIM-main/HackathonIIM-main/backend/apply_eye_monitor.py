@@ -1300,19 +1300,29 @@ async function eyeStart() {
             if (b80 < 0.15) samples.length = 0; else base = b80;
           }
         } else {
-          const closed = ear < base * 0.82;
-          if (!closed) {
-            if (ear > base * 0.95) base = base * 0.995 + ear * 0.005; // slowly adapt only to confidently open eyes
-            closedSince = 0; alarm = false;
+          // Hysteresis prevents a single noisy landmark frame from cancelling a real closure.
+          const definitelyClosed = ear < base * 0.88;
+          const definitelyOpen = ear > base * 0.98;
+          if (definitelyOpen) {
+            base = base * 0.997 + ear * 0.003; // adapt only when eyes are confidently open
+            closedSince = 0;
+            alarm = false;
             eyeSet("open", "Eyes open · EAR " + ear.toFixed(3) + " / baseline " + base.toFixed(3));
+          } else if (definitelyClosed || closedSince) {
+            // Once closure begins, borderline/noisy frames do not reset the 3-second timer.
+            if (definitelyClosed && !closedSince) closedSince = now;
+            if (!closedSince) {
+              eyeSet("open", "Eyes open · EAR " + ear.toFixed(3) + " / baseline " + base.toFixed(3));
+            } else {
+              const ms = now - closedSince;
+              if (ms >= EYE_CLOSED_MS) {
+                if (!alarm) { alarm = true; eyeAlerts++; }
+                eyeSet("alarm", "Eyes closed for " + Math.floor(ms / 1000) + " s");
+                if (now - lastBeep > 900) { eyeBeep(); lastBeep = now; } // repeat alarm until eyes clearly reopen
+              } else eyeSet("closed", "Eyes closing · EAR " + ear.toFixed(3) + " / baseline " + base.toFixed(3));
+            }
           } else {
-            if (!closedSince) closedSince = now;
-            const ms = now - closedSince;
-            if (ms >= EYE_CLOSED_MS) {
-              if (!alarm) { alarm = true; eyeAlerts++; }
-              eyeSet("alarm", "Eyes closed for " + Math.floor(ms / 1000) + " s");
-              if (now - lastBeep > 900) { eyeBeep(); lastBeep = now; }   // keeps beeping until the eyes open
-            } else eyeSet("closed", "Eyes closing · EAR " + ear.toFixed(3) + " / baseline " + base.toFixed(3));
+            eyeSet("open", "Eyes open · EAR " + ear.toFixed(3) + " / baseline " + base.toFixed(3));
           }
         }
       }
