@@ -427,11 +427,6 @@ body{background:#020817;color:#e7f2ff}
 #voiceDock.vd-collapsed .vd-dot{width:10px;height:10px}
 @media(max-width:600px){#voiceDock{top:auto;bottom:12px;right:10px;width:270px}}
 
-<<<<<<< HEAD:HackathonIIM-main/HackathonIIM-main/backend/public/index.html
-</style>
-</head>
-<body>
-=======
 #eyeBox{position:fixed;top:10px;left:10px;z-index:70;display:flex;align-items:center;gap:8px;pointer-events:none}
 #eyeBtn{pointer-events:auto;width:40px;height:40px;border-radius:50%;border:2px solid #7d8590;background:rgba(12,16,24,.88);padding:6px;cursor:pointer;color:#9aa4b2;transition:color .2s,border-color .2s,background .2s}
 #eyeBtn svg{width:100%;height:100%;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -463,7 +458,6 @@ body{background:#020817;color:#e7f2ff}
   </button>
   <span id="eyeLbl" hidden></span>
 </div>
->>>>>>> 7e76f14 (Eye monitor with 3 second drowsiness beep):backend/public/index.html
 
 <aside id="voiceDock" data-state="idle" aria-label="Saarthi voice assistant">
   <div class="vd-head" id="vdDrag">
@@ -1340,111 +1334,6 @@ const eyeUnlockedOrig = unlocked;
 unlocked = function () { const out = eyeUnlockedOrig.apply(this, arguments); eyeStart(); return out; };
 const eyeRelockOrig = $("relockBtn").onclick;
 $("relockBtn").onclick = function () { const out = eyeRelockOrig.apply(this, arguments); if (!isUnlocked) eyeStop(); return out; };
-</script>
-<script type="module">
-// Real WebGL 3D sedan viewer. Three.js is loaded from a CDN; the existing app/backend remains unchanged.
-(async function initSaarthi3D(){
-  const host = document.getElementById('vehicle3d');
-  if (!host) return;
-  try {
-    const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x061329, 10, 24);
-    const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true, powerPreference:'high-performance'});
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(host.clientWidth || 800, host.clientHeight || 340);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.18;
-    host.appendChild(renderer.domElement);
-    const camera = new THREE.PerspectiveCamera(36, (host.clientWidth || 800)/(host.clientHeight || 340), .1, 100);
-    let theta = 0.78, phi = 1.12, radius = 8.8, auto = true, dragging = false, moved = false, px=0, py=0;
-    const target = new THREE.Vector3(0, .62, 0);
-    const car = new THREE.Group(); scene.add(car);
-    const mat = (color, metalness=.2, roughness=.3, extra={}) => new THREE.MeshStandardMaterial({color, metalness, roughness, ...extra});
-    const paint = mat(0x087fc5,.72,.23,{emissive:0x031a36,emissiveIntensity:.65});
-    const brightPaint = mat(0x20c8ff,.55,.22,{emissive:0x006a9c,emissiveIntensity:.25});
-    const glass = mat(0x07182c,.45,.13,{metalness:.45});
-    const rubber = mat(0x080d15,.05,.8);
-    const alloy = mat(0x8ddff6,.85,.22);
-    const darkMetal = mat(0x14283b,.75,.3);
-    const headlight = new THREE.MeshStandardMaterial({color:0xcaf7ff,emissive:0x5be8ff,emissiveIntensity:2.8});
-    const taillight = new THREE.MeshStandardMaterial({color:0xff244e,emissive:0xff123d,emissiveIntensity:2.1});
-    const addMesh=(geo, material, pos, parent=car)=>{const m=new THREE.Mesh(geo,material);m.position.set(...pos);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;};
-    // Low, sculpted chassis and front/rear bumpers.
-    addMesh(new THREE.BoxGeometry(2.02,.48,4.05),paint,[0,.66,0]);
-    addMesh(new THREE.BoxGeometry(2.08,.22,3.5),brightPaint,[0,.48,-.05]);
-    addMesh(new THREE.BoxGeometry(2.12,.18,.34),darkMetal,[0,.51,2.02]);
-    addMesh(new THREE.BoxGeometry(2.12,.18,.32),darkMetal,[0,.51,-2.02]);
-    // Roof/cabin as a real extruded 3D mesh, with angled windscreen silhouette.
-    const cabinShape = new THREE.Shape();
-    cabinShape.moveTo(-.86,0); cabinShape.lineTo(-.60,.55); cabinShape.quadraticCurveTo(-.48,.69,-.25,.70); cabinShape.lineTo(.48,.68); cabinShape.quadraticCurveTo(.68,.65,.79,.43); cabinShape.lineTo(.99,0); cabinShape.closePath();
-    const cabinGeo = new THREE.ExtrudeGeometry(cabinShape,{depth:2.12,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.045,bevelThickness:.045,curveSegments:8});
-    cabinGeo.translate(0,0,-1.06);
-    const cabin = new THREE.Mesh(cabinGeo,paint); cabin.position.set(0,.86,-.12); cabin.castShadow=true; car.add(cabin);
-    // Roof panel and dark panoramic windows on both sides.
-    addMesh(new THREE.BoxGeometry(1.15,.035,1.22),glass,[0,1.54,-.12]);
-    for (const side of [-1,1]) {
-      const sideGlass = addMesh(new THREE.BoxGeometry(.035,.36,1.42),glass,[side*.895,1.22,-.18]);
-      sideGlass.rotation.z = side * -.08;
-      addMesh(new THREE.BoxGeometry(.045,.035,1.56),brightPaint,[side*.925,1.02,-.17]);
-      addMesh(new THREE.BoxGeometry(.12,.08,.3),darkMetal,[side*1.01,1.0,.72]);
-      // Door seams and handles add depth to the body sides.
-      for (const z of [-.8,.38]) addMesh(new THREE.BoxGeometry(.012,.28,.012),darkMetal,[side*1.012,.76,z]);
-      addMesh(new THREE.BoxGeometry(.025,.025,.2),alloy,[side*1.022,.91,.15]);
-    }
-    // Four real cylindrical wheels with hubs and radial spokes.
-    const wheels=[];
-    for (const x of [-1.01,1.01]) for (const z of [-1.32,1.34]) {
-      const wheelGroup = new THREE.Group(); wheelGroup.position.set(x,.48,z); car.add(wheelGroup); wheels.push(wheelGroup);
-      const tire = new THREE.Mesh(new THREE.CylinderGeometry(.39,.39,.22,40),rubber); tire.rotation.z=Math.PI/2; tire.castShadow=true; wheelGroup.add(tire);
-      const rim = new THREE.Mesh(new THREE.CylinderGeometry(.255,.255,.235,32),darkMetal); rim.rotation.z=Math.PI/2; wheelGroup.add(rim);
-      const hub = new THREE.Mesh(new THREE.CylinderGeometry(.075,.075,.25,20),alloy); hub.rotation.z=Math.PI/2; wheelGroup.add(hub);
-      for(let i=0;i<10;i++){const a=i*Math.PI/5;const spoke=addMesh(new THREE.BoxGeometry(.025,.035,.39),alloy,[0,0,0],wheelGroup);spoke.position.set(0,Math.cos(a)*.15,Math.sin(a)*.15);spoke.rotation.x=-a;}
-    }
-    // Front fascia, grille, lights, mirrors, tail lamps and trim.
-    addMesh(new THREE.BoxGeometry(.72,.19,.035),darkMetal,[0,.61,2.205]);
-    addMesh(new THREE.BoxGeometry(.48,.04,.045),brightPaint,[0,.59,2.23]);
-    for(const x of [-.72,.72]){
-      const lamp=addMesh(new THREE.BoxGeometry(.43,.09,.055),headlight,[x,.79,2.14]);lamp.rotation.y=x*.12;
-      addMesh(new THREE.BoxGeometry(.32,.075,.035),taillight,[x,.78,-2.12]);
-      addMesh(new THREE.BoxGeometry(.17,.1,.22),paint,[x*1.17,1.03,.63]);
-      addMesh(new THREE.BoxGeometry(.18,.04,.17),glass,[x*1.18,1.08,.64]);
-    }
-    addMesh(new THREE.BoxGeometry(1.22,.025,.07),brightPaint,[0,.88,-1.99]);
-    // Underbody glow strip and floor.
-    const underGlow = new THREE.Mesh(new THREE.BoxGeometry(1.85,.018,3.5),new THREE.MeshBasicMaterial({color:0x00bfff,transparent:true,opacity:.45}));underGlow.position.set(0,.35,0);car.add(underGlow);
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(4.3,80),new THREE.MeshBasicMaterial({color:0x0879b5,transparent:true,opacity:.12,side:THREE.DoubleSide}));floor.rotation.x=-Math.PI/2;floor.position.y=.05;scene.add(floor);
-    const grid = new THREE.GridHelper(16,32,0x12517a,0x12314e);grid.position.y=.035;scene.add(grid);
-    scene.add(new THREE.HemisphereLight(0x9bdfff,0x071226,2.0));
-    const key = new THREE.DirectionalLight(0xd9f5ff,3.2);key.position.set(4,7,5);scene.add(key);
-    const rimLight = new THREE.PointLight(0x00bfff,22,10);rimLight.position.set(-3,2,-2);scene.add(rimLight);
-    const frontLight = new THREE.PointLight(0x65eaff,12,7);frontLight.position.set(0,1.2,3.4);scene.add(frontLight);
-    function cameraUpdate(){const sp=Math.sin(phi);camera.position.set(target.x+radius*sp*Math.sin(theta),target.y+radius*Math.cos(phi),target.z+radius*sp*Math.cos(theta));camera.lookAt(target);}
-    cameraUpdate();
-    const resize=()=>{const w=Math.max(1,host.clientWidth),h=Math.max(1,host.clientHeight);renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();};
-    new ResizeObserver(resize).observe(host);
-    host.addEventListener('pointerdown',e=>{dragging=true;moved=false;px=e.clientX;py=e.clientY;host.setPointerCapture?.(e.pointerId);});
-    host.addEventListener('pointermove',e=>{if(!dragging)return;const dx=e.clientX-px,dy=e.clientY-py;if(Math.abs(dx)+Math.abs(dy)>1)moved=true;theta-=dx*.008;phi=Math.max(.35,Math.min(1.48,phi+dy*.006));px=e.clientX;py=e.clientY;cameraUpdate();if(moved)auto=false;});
-    const endDrag=()=>{dragging=false;};host.addEventListener('pointerup',endDrag);host.addEventListener('pointercancel',endDrag);
-    host.addEventListener('wheel',e=>{e.preventDefault();radius=Math.max(5.4,Math.min(12,radius+e.deltaY*.008));cameraUpdate();},{passive:false});
-    host.addEventListener('keydown',e=>{if(e.key==='ArrowLeft')theta-=.12;else if(e.key==='ArrowRight')theta+=.12;else if(e.key==='ArrowUp')phi=Math.max(.35,phi-.08);else if(e.key==='ArrowDown')phi=Math.min(1.48,phi+.08);else return;cameraUpdate();});
-    document.getElementById('viewFront')?.addEventListener('click',()=>{theta=0;phi=1.18;radius=8.2;auto=false;cameraUpdate();});
-    document.getElementById('viewSide')?.addEventListener('click',()=>{theta=Math.PI/2;phi=1.22;radius=8.7;auto=false;cameraUpdate();});
-    document.getElementById('viewReset')?.addEventListener('click',()=>{theta=.78;phi=1.12;radius=8.8;auto=true;cameraUpdate();setAutoButton();});
-    const autoBtn=document.getElementById('autoRotate');
-    function setAutoButton(){if(autoBtn){autoBtn.textContent='Auto-rotate: '+(auto?'On':'Off');autoBtn.setAttribute('aria-pressed',String(auto));}}
-    autoBtn?.addEventListener('click',()=>{auto=!auto;setAutoButton();});
-    let last=0;
-    function animate(t){requestAnimationFrame(animate);const dt=Math.min(.05,(t-last)/1000||0);last=t;if(auto&&!dragging)theta+=dt*.23;car.position.y=.015*Math.sin(t*.0015);wheels.forEach(w=>{w.rotation.x+=dt*1.4;});cameraUpdate();renderer.render(scene,camera);}
-    setAutoButton();requestAnimationFrame(animate);
-    window.addEventListener('beforeunload',()=>{renderer.dispose();});
-  } catch (err) {
-    console.error('3D vehicle viewer could not start:',err);
-    host.innerHTML='<div style="height:100%;display:grid;place-items:center;padding:24px;text-align:center;color:#b8d8f3;background:radial-gradient(ellipse,#12365b,#061329)"><div><strong style="font-size:18px">3D viewer could not load</strong><p style="font-size:13px">Check your internet connection and reload. The Three.js 3D engine loads from a CDN.</p></div></div>';
-    const hint=document.getElementById('vehicleHint');if(hint)hint.textContent='3D ENGINE UNAVAILABLE';
-  }
-})();
 </script>
 <script type="module">
 // Real WebGL 3D sedan viewer. Three.js is loaded from a CDN; the existing app/backend remains unchanged.
