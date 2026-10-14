@@ -1273,7 +1273,7 @@ async function eyeStart() {
     eyeStream = stream;
     const v = $("eyeCam"); v.srcObject = stream; await v.play();
 
-    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.35 });
     const samples = []; let base = 0, closedSince = 0, lastSeen = Date.now(), lastBeep = 0, alarm = false;
     while (run === eyeRun) {
       const now = Date.now();
@@ -1300,11 +1300,11 @@ async function eyeStart() {
             if (b80 < 0.15) samples.length = 0; else base = b80;
           }
         } else {
-          const closed = ear < base * 0.72;
+          const closed = ear < base * 0.82;
           if (!closed) {
             if (ear > base * 0.85) base = base * 0.98 + ear * 0.02;   // follow slow lighting / posture changes
             closedSince = 0; alarm = false;
-            eyeSet("open", "Eyes open");
+            eyeSet("open", "Eyes open (EAR " + ear.toFixed(3) + ", baseline " + base.toFixed(3) + ")");
           } else {
             if (!closedSince) closedSince = now;
             const ms = now - closedSince;
@@ -1312,11 +1312,11 @@ async function eyeStart() {
               if (!alarm) { alarm = true; eyeAlerts++; }
               eyeSet("alarm", "Eyes closed for " + Math.floor(ms / 1000) + " s");
               if (now - lastBeep > 900) { eyeBeep(); lastBeep = now; }   // keeps beeping until the eyes open
-            } else eyeSet("closed", "Eyes closed");
+            } else eyeSet("closed", "Eyes closed (EAR " + ear.toFixed(3) + ", baseline " + base.toFixed(3) + ")");
           }
         }
       }
-      await eyeWait(90);
+      await eyeWait(60);
     }
   } catch (e) {
     if (run === eyeRun) { eyeOn = false; eyeSet("off", "Eye monitor unavailable: " + (e.message || e)); }
