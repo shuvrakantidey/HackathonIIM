@@ -1,4 +1,3 @@
-```javascript
 // Saarthi AI backend server
 // Node.js 18+
 // Run with: node server.js
@@ -29,7 +28,7 @@ try {
     fs.readFileSync(DATA_FILE, "utf8")
   ));
 } catch (error) {
-  // First run: start with empty data.
+  console.log("Starting with empty event data.");
 }
 
 const save = () => {
@@ -56,7 +55,14 @@ const clean = (value, maxLength) =>
     .trim()
     .slice(0, maxLength);
 
-function send(res, statusCode, body, contentType = "application/json") {
+function send(
+  res,
+  statusCode,
+  body,
+  contentType = "application/json"
+) {
+  if (res.writableEnded) return;
+
   res.writeHead(statusCode, {
     "Content-Type": contentType,
     "Cache-Control": "no-store",
@@ -70,17 +76,22 @@ function send(res, statusCode, body, contentType = "application/json") {
 
 function readJson(req, res, callback) {
   let body = "";
+  let tooLarge = false;
 
   req.on("data", (chunk) => {
+    if (tooLarge) return;
+
     body += chunk;
 
     if (body.length > 3000) {
+      tooLarge = true;
       send(res, 413, { error: "Request too large" });
-      req.destroy();
     }
   });
 
   req.on("end", async () => {
+    if (tooLarge) return;
+
     try {
       await callback(JSON.parse(body || "{}"));
     } catch (error) {
@@ -94,7 +105,10 @@ function readJson(req, res, callback) {
 }
 
 function statsFor(list) {
-  const unlocks = list.filter((event) => event.type === "unlock");
+  const unlocks = list.filter(
+    (event) => event.type === "unlock"
+  );
+
   const last = [...list].reverse().find(
     (event) => event.type !== "denied"
   );
@@ -116,13 +130,62 @@ function statsFor(list) {
   };
 }
 
+function servePublicFile(res, filename) {
+  const safeRoot = path.resolve(PUBLIC_DIR);
+  const filePath = path.resolve(safeRoot, filename);
+
+  if (
+    filePath !== safeRoot &&
+    !filePath.startsWith(safeRoot + path.sep)
+  ) {
+    return send(res, 403, { error: "Forbidden" });
+  }
+
+  fs.readFile(filePath, (error, content) => {
+    if (error) {
+      console.error(
+        `Could not read ${filename}:`,
+        error.message
+      );
+
+      return send(res, 404, {
+        error: `File not found: ${filename}`,
+      });
+    }
+
+    const extension = path.extname(filename).toLowerCase();
+
+    const contentTypes = {
+      ".html": "text/html; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".ico": "image/x-icon",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+    };
+
+    res.writeHead(200, {
+      "Content-Type":
+        contentTypes[extension] || "application/octet-stream",
+      "X-Content-Type-Options": "nosniff",
+    });
+
+    res.end(content);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
+  // FIXED: Use backticks around the URL.
   const pathname = new URL(
     req.url,
     `http://${req.headers.host || "localhost"}`
   ).pathname;
 
-  // Existing dashboard APIs
+  // Dashboard scenarios
   if (req.method === "GET" && pathname === "/api/scenarios") {
     return send(
       res,
@@ -134,43 +197,52 @@ const server = http.createServer(async (req, res) => {
     );
   }
 
+  // Dashboard trends
   if (req.method === "GET" && pathname === "/api/trends") {
     return send(res, 200, trendInfo);
   }
 
+  // AI status
   if (req.method === "GET" && pathname === "/api/ai-status") {
     try {
       return send(res, 200, await aiStatus());
     } catch (error) {
-      return send(res, 500, { error: "AI status unavailable" });
+      console.error("AI status error:", error.message);
+
+      return send(res, 500, {
+        error: "AI status unavailable",
+      });
     }
   }
 
+  // AI advice
   if (req.method === "POST" && pathname === "/api/advice") {
     return readJson(req, res, async (body) => {
       const scenario = scenarios[body.index];
 
       if (!scenario) {
-        return send(res, 400, { error: "Unknown scenario" });
+        return send(res, 400, {
+          error: "Unknown scenario",
+        });
       }
 
-      return send(
-        res,
-        200,
-        await getAdvice(
-          scenario,
-          analyze(scenario.data),
-          trendInfo
-        )
+      const advice = await getAdvice(
+        scenario,
+        analyze(scenario.data),
+        trendInfo
       );
+
+      return send(res, 200, advice);
     });
   }
 
-  // Driver lock/unlock event logging
+  // Log lock/unlock events
   if (req.method === "POST" && pathname === "/api/log") {
     return readJson(req, res, (body) => {
       if (!TYPES.includes(body.type)) {
-        return send(res, 400, { error: "Bad event" });
+        return send(res, 400, {
+          error: "Bad event",
+        });
       }
 
       const now = Date.now();
@@ -197,6 +269,7 @@ const server = http.createServer(async (req, res) => {
         event.durationSec = Math.round(
           (now - lastUnlock[who]) / 1000
         );
+
         delete lastUnlock[who];
       }
 
@@ -207,11 +280,12 @@ const server = http.createServer(async (req, res) => {
       }
 
       save();
+
       return send(res, 200, { ok: true });
     });
   }
 
-  // Owner registration
+  // Register vehicle owner
   if (
     req.method === "POST" &&
     pathname === "/api/owner/register"
@@ -237,7 +311,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (Object.keys(owners).length >= 100) {
-        return send(res, 503, { error: "Owner limit reached." });
+        return send(res, 503, {
+          error: "Owner limit reached.",
+        });
       }
 
       const generated = await ownerTool.generate();
@@ -262,7 +338,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Owner login
-  if (req.method === "POST" && pathname === "/api/owner/login") {
+  if (
+    req.method === "POST" &&
+    pathname === "/api/owner/login"
+  ) {
     return readJson(req, res, async (body) => {
       const key = normPlate(body.plate);
       const now = Date.now();
@@ -279,16 +358,15 @@ const server = http.createServer(async (req, res) => {
 
       const owner = owners[key];
 
-      const valid = owner
-        ? await ownerTool.verify(
-            String(body.password || ""),
-            owner.salt,
-            owner.hash
-          )
-        : (
-            await ownerTool.verify("x", "00", "00"),
-            false
-          );
+      let valid = false;
+
+      if (owner) {
+        valid = await ownerTool.verify(
+          String(body.password || ""),
+          owner.salt,
+          owner.hash
+        );
+      }
 
       if (!valid) {
         failTimes[key].push(now);
@@ -309,9 +387,12 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // Owner-specific event history
+  // Owner event history
   if (req.method === "GET" && pathname === "/api/log") {
-    const token = String(req.headers["x-owner-token"] || "");
+    const token = String(
+      req.headers["x-owner-token"] || ""
+    );
+
     const session = sessions.get(token);
 
     if (!session || session.expires < Date.now()) {
@@ -323,6 +404,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     const owner = owners[session.key];
+
+    if (!owner) {
+      sessions.delete(token);
+
+      return send(res, 401, {
+        error: "Owner not found",
+      });
+    }
+
     const mine = events.filter(
       (event) => event.plateKey === session.key
     );
@@ -345,7 +435,7 @@ const server = http.createServer(async (req, res) => {
     return servePublicFile(res, "index.html");
   }
 
-  // Road Level Detector interface
+  // Road Level Detector page
   if (
     req.method === "GET" &&
     pathname === "/road-scan.html"
@@ -353,60 +443,33 @@ const server = http.createServer(async (req, res) => {
     return servePublicFile(res, "road-scan.html");
   }
 
-  // Other static files inside backend/public
+  // Serve other existing files from the public folder.
   if (req.method === "GET") {
-    const allowed = new Set([
-      "/favicon.ico",
-      "/style.css",
-      "/script.js",
-    ]);
+    const filename = path.basename(pathname);
 
-    if (allowed.has(pathname)) {
-      return servePublicFile(res, pathname.slice(1));
+    if (
+      filename &&
+      filename !== "." &&
+      filename !== ".." &&
+      pathname !== "/"
+    ) {
+      return servePublicFile(res, filename);
     }
   }
 
-  return send(res, 404, { error: "Not found" });
-});
-
-function servePublicFile(res, filename) {
-  const filePath = path.resolve(PUBLIC_DIR, filename);
-
-  // Prevent serving files outside the public directory.
-  if (!filePath.startsWith(path.resolve(PUBLIC_DIR) + path.sep)) {
-    return send(res, 403, { error: "Forbidden" });
-  }
-
-  fs.readFile(filePath, "utf8", (error, content) => {
-    if (error) {
-      return send(res, 404, {
-        error: `File not found: ${filename}`,
-      });
-    }
-
-    const extension = path.extname(filename).toLowerCase();
-
-    const contentTypes = {
-      ".html": "text/html; charset=utf-8",
-      ".css": "text/css; charset=utf-8",
-      ".js": "application/javascript; charset=utf-8",
-      ".json": "application/json; charset=utf-8",
-      ".svg": "image/svg+xml",
-      ".ico": "image/x-icon",
-    };
-
-    return send(
-      res,
-      200,
-      content,
-      contentTypes[extension] || "application/octet-stream"
-    );
+  return send(res, 404, {
+    error: "Not found",
   });
-}
-
-server.listen(PORT, () => {
-  console.log(`Saarthi AI running on port ${PORT}`);
-  console.log(`Dashboard: http://localhost:${PORT}`);
-  console.log(`Road Level Detector: http://localhost:${PORT}/road-scan.html`);
 });
-```
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Saarthi AI running on port ${PORT}`);
+  console.log(`Port: ${PORT}`);
+  console.log("Dashboard route: /");
+  console.log("Road Level Detector route: /road-scan.html");
+});
+
+server.on("error", (error) => {
+  console.error("Server startup error:", error);
+  process.exit(1);
+});
