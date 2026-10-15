@@ -1203,7 +1203,7 @@ function openApp(which) {
   $("appYt").classList.toggle("on", which === "yt"); $("appMaps").classList.toggle("on", which === "maps"); $("appRoadScan").classList.toggle("on", which === "roadscan");
   if (which === "maps" && !$("mapBox").innerHTML) showMap("India", 5);
   if (which === "yt") $("ytLink").focus();
-  if (which === "roadscan") $("roadScanFrame").src = "road-scan.html";
+  if (which === "roadscan") $("roadScanFrame").src = new URL("/road-scan.html", window.location.origin).href;
 }
 function ytEmbed(text) {
   const list = (text.match(/[?&]list=([\w-]+)/) || [])[1];
